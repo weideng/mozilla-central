@@ -1595,10 +1595,10 @@ void MultiTouchMotionAccumulator::process(const RawEvent* rawEvent) {
                     slot->mAbsMTTrackingId = rawEvent->value;
                 }
                 break;
-            case ABS_MT_PRESSURE:
+/*            case ABS_MT_PRESSURE:
                 slot->mInUse = true;
                 slot->mAbsMTPressure = rawEvent->value;
-                break;
+                break;*/
             case ABS_MT_DISTANCE:
                 slot->mInUse = true;
                 slot->mAbsMTDistance = rawEvent->value;
@@ -5609,8 +5609,8 @@ void MultiTouchInputMapper::syncTouch(nsecs_t when, bool* outHavePointerIds) {
         outPointer.tiltY = 0;
 
         // Mozilla bug 739417
-        if (!outPointer.touchMajor)
-            continue;
+/*        if (!outPointer.touchMajor)
+            continue;*/
 
         outPointer.toolType = inSlot->getToolType();
         if (outPointer.toolType == AMOTION_EVENT_TOOL_TYPE_UNKNOWN) {
