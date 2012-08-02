@@ -665,7 +665,8 @@ struct RawPointerData {
     void getCentroidOfTouchingPointers(float* outX, float* outY) const;
 
     inline void markIdBit(uint32_t id, bool isHovering) {
-        if (isHovering) {
+       isHovering = false;
+	    if (isHovering) {
             hoveringIdBits.markBit(id);
         } else {
             touchingIdBits.markBit(id);
