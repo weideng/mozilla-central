@@ -2949,6 +2949,7 @@ RIL[REQUEST_DIAL] = function REQUEST_DIAL(length, options) {
     this.getFailCauseCode(options);
     return;
   }
+  this.getCurrentCalls();
 };
 RIL[REQUEST_GET_IMSI] = function REQUEST_GET_IMSI(length, options) {
   if (options.rilRequestError) {
