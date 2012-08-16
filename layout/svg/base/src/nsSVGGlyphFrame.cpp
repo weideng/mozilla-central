@@ -14,7 +14,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "nsBidiPresUtils.h"
 #include "nsDisplayList.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsIDOMSVGRect.h"
 #include "nsRenderingContext.h"
 #include "nsSVGEffects.h"
@@ -677,7 +677,8 @@ nsSVGGlyphFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
 
   // Account for stroke:
   if ((aFlags & nsSVGUtils::eBBoxIncludeStrokeGeometry) ||
-      ((aFlags & nsSVGUtils::eBBoxIncludeStroke) && HasStroke())) {
+      ((aFlags & nsSVGUtils::eBBoxIncludeStroke) &&
+       nsSVGUtils::HasStroke(this))) {
     bbox.UnionEdges(nsSVGUtils::PathExtentsToMaxStrokeExtents(pathExtents,
                                                               this,
                                                               aToBBoxUserspace));
@@ -949,16 +950,17 @@ nsSVGGlyphFrame::SetupCairoState(gfxContext *aContext, gfxPattern **aStrokePatte
   DrawMode toDraw = DrawMode(0);
   const nsStyleSVG* style = GetStyleSVG();
 
-  if (HasStroke()) {
+  if (nsSVGUtils::HasStroke(this)) {
     gfxContextMatrixAutoSaveRestore matrixRestore(aContext);
     aContext->IdentityMatrix();
 
     toDraw = DrawMode(toDraw | gfxFont::GLYPH_STROKE);
 
-    SetupCairoStrokeHitGeometry(aContext);
+    nsSVGUtils::SetupCairoStrokeHitGeometry(this, aContext);
     float opacity = style->mStrokeOpacity;
-    nsSVGPaintServerFrame *ps = GetPaintServer(&style->mStroke,
-                                               nsSVGEffects::StrokeProperty());
+    nsSVGPaintServerFrame *ps =
+      nsSVGEffects::GetPaintServer(this, &style->mStroke,
+                                   nsSVGEffects::StrokeProperty());
 
     nsRefPtr<gfxPattern> strokePattern;
 
@@ -970,10 +972,8 @@ nsSVGGlyphFrame::SetupCairoState(gfxContext *aContext, gfxPattern **aStrokePatte
     }
 
     if (!strokePattern) {
-      nscolor color;
-      nsSVGUtils::GetFallbackOrPaintColor(aContext, GetStyleContext(),
-                                          &nsStyleSVG::mStroke, &opacity,
-                                          &color);
+      nscolor color = nsSVGUtils::GetFallbackOrPaintColor(
+                        aContext, GetStyleContext(), &nsStyleSVG::mStroke);
       strokePattern = new gfxPattern(gfxRGBA(NS_GET_R(color) / 255.0,
                                              NS_GET_G(color) / 255.0,
                                              NS_GET_B(color) / 255.0,
@@ -983,7 +983,7 @@ nsSVGGlyphFrame::SetupCairoState(gfxContext *aContext, gfxPattern **aStrokePatte
     strokePattern.forget(aStrokePattern);
   }
 
-  if (SetupCairoFill(aContext)) {
+  if (nsSVGUtils::SetupCairoFillPaint(this, aContext)) {
     toDraw = DrawMode(toDraw | gfxFont::GLYPH_FILL);
   }
 
@@ -1676,7 +1676,7 @@ nsSVGGlyphFrame::EnsureTextRun(float *aDrawScale, float *aMetricsScale,
 
     PRUint32 flags = gfxTextRunFactory::TEXT_NEED_BOUNDING_BOX |
       GetTextRunFlags(text.Length()) |
-      nsLayoutUtils::GetTextRunFlagsForStyle(GetStyleContext(), GetStyleText(), GetStyleFont());
+      nsLayoutUtils::GetTextRunFlagsForStyle(GetStyleContext(), GetStyleFont(), 0);
 
     // XXX We should use a better surface here! But then we'd have to
     // change things so we can ensure we always have the "right" sort of

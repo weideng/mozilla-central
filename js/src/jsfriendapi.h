@@ -15,12 +15,6 @@
 
 JS_BEGIN_EXTERN_C
 
-/*
- * Only save the source of scripts that are compileAndGo or are created with
- * JS_CompileFunction*.
- */
-#define JSOPTION_ONLY_CNG_SOURCE JS_BIT(20)
-
 extern JS_FRIEND_API(void)
 JS_SetGrayGCRootsTracer(JSRuntime *rt, JSTraceDataOp traceOp, void *data);
 
@@ -81,8 +75,11 @@ enum {
     JS_TELEMETRY_GC_REASON,
     JS_TELEMETRY_GC_IS_COMPARTMENTAL,
     JS_TELEMETRY_GC_MS,
+    JS_TELEMETRY_GC_MAX_PAUSE_MS,
     JS_TELEMETRY_GC_MARK_MS,
     JS_TELEMETRY_GC_SWEEP_MS,
+    JS_TELEMETRY_GC_MARK_ROOTS_MS,
+    JS_TELEMETRY_GC_MARK_GRAY_MS,
     JS_TELEMETRY_GC_SLICE_MS,
     JS_TELEMETRY_GC_MMU_50,
     JS_TELEMETRY_GC_RESET,
@@ -165,6 +162,8 @@ struct JSFunctionSpecWithHelp {
 
 #define JS_FN_HELP(name,call,nargs,flags,usage,help)                          \
     {name, call, nargs, (flags) | JSPROP_ENUMERATE | JSFUN_STUB_GSOPS, usage, help}
+#define JS_FS_HELP_END                                                        \
+    {NULL, NULL, 0, 0, NULL, NULL}
 
 extern JS_FRIEND_API(bool)
 JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *obj, const JSFunctionSpecWithHelp *fs);
@@ -329,6 +328,16 @@ struct Object {
     }
 };
 
+struct Function {
+    Object base;
+    uint16_t nargs;
+    uint16_t flags;
+    /* Used only for natives */
+    Native native;
+    const JSJitInfo *jitinfo;
+    void *_1;
+};
+
 struct Atom {
     size_t _;
     const jschar *chars;
@@ -456,13 +465,6 @@ GetObjectSlot(RawObject obj, size_t slot)
     return reinterpret_cast<const shadow::Object *>(obj)->slotRef(slot);
 }
 
-inline Shape *
-GetObjectShape(RawObject obj)
-{
-    shadow::Shape *shape = reinterpret_cast<const shadow::Object*>(obj)->shape;
-    return reinterpret_cast<Shape *>(shape);
-}
-
 inline const jschar *
 GetAtomChars(JSAtom *atom)
 {
@@ -553,19 +555,59 @@ GetPCCountScriptContents(JSContext *cx, size_t script);
  *
  * For more detailed information, see vm/SPSProfiler.h
  */
-struct ProfileEntry {
+class ProfileEntry
+{
     /*
-     * These two fields are marked as 'volatile' so that the compiler doesn't
-     * re-order instructions which modify them. The operation in question is:
+     * All fields are marked volatile to prevent the compiler from re-ordering
+     * instructions. Namely this sequence:
      *
-     *    stack[i].string = str;
-     *    (*size)++;
+     *    entry[size] = ...;
+     *    size++;
      *
-     * If the size increment were re-ordered before the store of the string,
-     * then if sampling occurred there would be a bogus entry on the stack.
+     * If the size modification were somehow reordered before the stores, then
+     * if a sample were taken it would be examining bogus information.
+     *
+     * A ProfileEntry represents both a C++ profile entry and a JS one. Both use
+     * the string as a description, but JS uses the sp as NULL to indicate that
+     * it is a JS entry. The script_ is then only ever examined for a JS entry,
+     * and the idx is used by both, but with different meanings.
      */
-    const char * volatile string;
-    void * volatile sp;
+    const char * volatile string; // Descriptive string of this entry
+    void * volatile sp;           // Relevant stack pointer for the entry
+    JSScript * volatile script_;  // if js(), non-null script which is running
+    uint32_t volatile idx;        // if js(), idx of pc, otherwise line number
+
+  public:
+    /*
+     * All of these methods are marked with the 'volatile' keyword because SPS's
+     * representation of the stack is stored such that all ProfileEntry
+     * instances are volatile. These methods would not be available unless they
+     * were marked as volatile as well
+     */
+
+    bool js() volatile {
+        JS_ASSERT_IF(sp == NULL, script_ != NULL);
+        return sp == NULL;
+    }
+
+    uint32_t line() volatile { JS_ASSERT(!js()); return idx; }
+    JSScript *script() volatile { JS_ASSERT(js()); return script_; }
+    void *stackAddress() volatile { return sp; }
+    const char *label() volatile { return string; }
+
+    void setLine(uint32_t line) volatile { JS_ASSERT(!js()); idx = line; }
+    void setLabel(const char *string) volatile { this->string = string; }
+    void setStackAddress(void *sp) volatile { this->sp = sp; }
+    void setScript(JSScript *script) volatile { script_ = script; }
+
+    /* we can't know the layout of JSScript, so look in vm/SPSProfiler.cpp */
+    JS_FRIEND_API(jsbytecode *) pc() volatile;
+    JS_FRIEND_API(void) setPC(jsbytecode *pc) volatile;
+
+    static size_t offsetOfString() { return offsetof(ProfileEntry, string); }
+    static size_t offsetOfStackAddress() { return offsetof(ProfileEntry, sp); }
+    static size_t offsetOfPCIdx() { return offsetof(ProfileEntry, idx); }
+    static size_t offsetOfScript() { return offsetof(ProfileEntry, script_); }
 };
 
 JS_FRIEND_API(void)
@@ -574,6 +616,9 @@ SetRuntimeProfilingStack(JSRuntime *rt, ProfileEntry *stack, uint32_t *size,
 
 JS_FRIEND_API(void)
 EnableRuntimeProfilingStack(JSRuntime *rt, bool enabled);
+
+JS_FRIEND_API(jsbytecode*)
+ProfilingGetPC(JSRuntime *rt, JSScript *script, void *ip);
 
 #ifdef JS_THREADSAFE
 JS_FRIEND_API(void *)
@@ -745,6 +790,25 @@ typedef void
 extern JS_FRIEND_API(GCSliceCallback)
 SetGCSliceCallback(JSRuntime *rt, GCSliceCallback callback);
 
+/* Was the most recent GC run incrementally? */
+extern JS_FRIEND_API(bool)
+WasIncrementalGC(JSRuntime *rt);
+
+typedef JSBool
+(* DOMInstanceClassMatchesProto)(JSHandleObject protoObject, uint32_t protoID,
+                                 uint32_t depth);
+
+struct JSDOMCallbacks {
+    DOMInstanceClassMatchesProto instanceClassMatchesProto;
+};
+typedef struct JSDOMCallbacks DOMCallbacks;
+
+extern JS_FRIEND_API(void)
+SetDOMCallbacks(JSRuntime *rt, const DOMCallbacks *callbacks);
+
+extern JS_FRIEND_API(const DOMCallbacks *)
+GetDOMCallbacks(JSRuntime *rt);
+
 /*
  * Signals a good place to do an incremental slice, because the browser is
  * drawing a frame.
@@ -888,6 +952,13 @@ NukeCrossCompartmentWrappers(JSContext* cx,
                              const CompartmentFilter& sourceFilter,
                              const CompartmentFilter& targetFilter,
                              NukeReferencesToWindow nukeReferencesToWindow);
+
+/* Specify information about ListBase proxies in the DOM, for use by ICs. */
+JS_FRIEND_API(void)
+SetListBaseInformation(void *listBaseHandlerFamily, uint32_t listBaseExpandoSlot);
+
+void *GetListBaseHandlerFamily();
+uint32_t GetListBaseExpandoSlot();
 
 } /* namespace js */
 
@@ -1293,5 +1364,43 @@ JS_GetDataViewByteLength(JSObject *obj, JSContext *cx);
  */
 JS_FRIEND_API(void *)
 JS_GetDataViewData(JSObject *obj, JSContext *cx);
+
+#ifdef __cplusplus
+/*
+ * This struct contains metadata passed from the DOM to the JS Engine for JIT
+ * optimizations on DOM property accessors. Eventually, this should be made
+ * available to general JSAPI users, but we are not currently ready to do so.
+ */
+typedef bool
+(* JSJitPropertyOp)(JSContext *cx, JSHandleObject thisObj,
+                    void *specializedThis, JS::Value *vp);
+typedef bool
+(* JSJitMethodOp)(JSContext *cx, JSHandleObject thisObj,
+                  void *specializedThis, unsigned argc, JS::Value *vp);
+
+struct JSJitInfo {
+    JSJitPropertyOp op;
+    uint32_t protoID;
+    uint32_t depth;
+    bool isInfallible;    /* Is op fallible? Getters only */
+    bool isConstant;      /* Getting a construction-time constant? */
+};
+
+static JS_ALWAYS_INLINE const JSJitInfo *
+FUNCTION_VALUE_TO_JITINFO(const JS::Value& v)
+{
+    JS_ASSERT(js::GetObjectClass(&v.toObject()) == &js::FunctionClass);
+    return reinterpret_cast<js::shadow::Function *>(&v.toObject())->jitinfo;
+}
+
+static JS_ALWAYS_INLINE void
+SET_JITINFO(JSFunction * func, const JSJitInfo *info)
+{
+    js::shadow::Function *fun = reinterpret_cast<js::shadow::Function *>(func);
+    /* JS_ASSERT(func->isNative()). 0x4000 is JSFUN_INTERPRETED */
+    JS_ASSERT(!(fun->flags & 0x4000));
+    fun->jitinfo = info;
+}
+#endif /* __cplusplus */
 
 #endif /* jsfriendapi_h___ */

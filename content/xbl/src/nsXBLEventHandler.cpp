@@ -10,7 +10,6 @@
 #include "nsIDOMKeyEvent.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsXBLPrototypeHandler.h"
-#include "nsIDOMNSEvent.h"
 #include "nsGUIEvent.h"
 #include "nsContentUtils.h"
 
@@ -86,10 +85,8 @@ nsXBLKeyEventHandler::ExecuteMatchedHandlers(nsIDOMKeyEvent* aKeyEvent,
                                              PRUint32 aCharCode,
                                              bool aIgnoreShiftKey)
 {
-  nsCOMPtr<nsIDOMNSEvent> domNSEvent = do_QueryInterface(aKeyEvent);
   bool trustedEvent = false;
-  if (domNSEvent)
-    domNSEvent->GetIsTrusted(&trustedEvent);
+  aKeyEvent->GetIsTrusted(&trustedEvent);
 
   nsCOMPtr<nsIDOMEventTarget> target;
   aKeyEvent->GetCurrentTarget(getter_AddRefs(target));
@@ -154,6 +151,7 @@ NS_NewXBLEventHandler(nsXBLPrototypeHandler* aHandler,
     case NS_DRAG_EVENT:
     case NS_MOUSE_EVENT:
     case NS_MOUSE_SCROLL_EVENT:
+    case NS_WHEEL_EVENT:
     case NS_SIMPLE_GESTURE_EVENT:
       *aResult = new nsXBLMouseEventHandler(aHandler);
       break;

@@ -651,9 +651,9 @@ class OrderedHashSet
 bool
 HashableValue::setValue(JSContext *cx, const Value &v)
 {
-    if (v.isString() && v.toString()->isRope()) {
-        // Flatten this rope so that equals() is infallible.
-        JSString *str = v.toString()->ensureLinear(cx);
+    if (v.isString()) {
+        // Atomize so that hash() and equals() are fast and infallible.
+        JSString *str = AtomizeString(cx, v.toString(), DoNotInternAtom);
         if (!str)
             return false;
         value = StringValue(str);
@@ -683,28 +683,15 @@ HashableValue::hash() const
 {
     // HashableValue::setValue normalizes values so that the SameValue relation
     // on HashableValues is the same as the == relationship on
-    // value.data.asBits, except for strings.
-    if (value.isString()) {
-        JSLinearString &s = value.toString()->asLinear();
-        return HashChars(s.chars(), s.length());
-    }
-
-    // Having dispensed with strings, we can just hash asBits.
-    uint64_t u = value.asRawBits();
-    return HashNumber((u >> 3) ^
-                      (u >> (HashNumberSizeBits + 3)) ^
-                      (u << (HashNumberSizeBits - 3)));
+    // value.data.asBits.
+    return value.asRawBits();
 }
 
 bool
 HashableValue::equals(const HashableValue &other) const
 {
-    // Two HashableValues are equal if they have equal bits or they're equal strings.
-    bool b = (value.asRawBits() == other.value.asRawBits()) ||
-              (value.isString() &&
-               other.value.isString() &&
-               EqualStrings(&value.toString()->asLinear(),
-                            &other.value.toString()->asLinear()));
+    // Two HashableValues are equal if they have equal bits.
+    bool b = (value.asRawBits() == other.value.asRawBits());
 
 #ifdef DEBUG
     bool same;
@@ -836,6 +823,8 @@ MapIteratorObject::next_impl(JSContext *cx, CallArgs args)
     }
 
     Value pair[2] = { range->front().key.get(), range->front().value };
+    AutoValueArray root(cx, pair, 2);
+
     JSObject *pairobj = NewDenseCopiedArray(cx, 2, pair);
     if (!pairobj)
         return false;
@@ -983,7 +972,7 @@ MapObject::construct(JSContext *cx, unsigned argc, Value *vp)
     if (args.hasDefined(0)) {
         ForOfIterator iter(cx, args[0]);
         while (iter.next()) {
-            JSObject *pairobj = js_ValueToNonNullObject(cx, iter.value());
+            RootedObject pairobj(cx, js_ValueToNonNullObject(cx, iter.value()));
             if (!pairobj)
                 return false;
 

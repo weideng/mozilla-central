@@ -302,11 +302,6 @@ typedef HashMap<JSScript *,
                 DefaultHasher<JSScript *>,
                 SystemAllocPolicy> ScriptCountsMap;
 
-typedef HashMap<JSScript *,
-                jschar *,
-                DefaultHasher<JSScript *>,
-                SystemAllocPolicy> SourceMapMap;
-
 class DebugScript
 {
     friend struct ::JSScript;
@@ -542,8 +537,6 @@ struct JSScript : public js::gc::Cell
     bool            isGeneratorExp:1; /* is a generator expression */
     bool            hasScriptCounts:1;/* script has an entry in
                                          JSCompartment::scriptCountsMap */
-    bool            hasSourceMap:1;   /* script has an entry in
-                                         JSCompartment::sourceMapMap */
     bool            hasDebugScript:1; /* script has an entry in
                                          JSCompartment::debugScriptMap */
 
@@ -734,11 +727,6 @@ struct JSScript : public js::gc::Cell
     js::PCCounts getPCCounts(jsbytecode *pc);
     js::ScriptCounts releaseScriptCounts();
     void destroyScriptCounts(js::FreeOp *fop);
-
-    bool setSourceMap(JSContext *cx, jschar *sourceMap);
-    jschar *getSourceMap();
-    jschar *releaseSourceMap();
-    void destroySourceMap(js::FreeOp *fop);
 
     jsbytecode *main() {
         return code + mainOffset;
@@ -978,7 +966,6 @@ struct SourceCompressionToken;
 struct ScriptSource
 {
     friend class SourceCompressorThread;
-    ScriptSource *next;
   private:
     union {
         // When the script source is ready, compressedLength_ != 0 implies
@@ -987,10 +974,15 @@ struct ScriptSource
         jschar *source;
         unsigned char *compressed;
     } data;
+    uint32_t refs;
     uint32_t length_;
     uint32_t compressedLength_;
-    bool marked:1;
-    bool onRuntime_:1;
+    jschar *sourceMap_;
+
+    // True if we can call JSRuntime::sourceHook to load the source on
+    // demand. If sourceRetrievable_ and hasSourceData() are false, it is not
+    // possible to get source at all.
+    bool sourceRetrievable_:1;
     bool argumentsNotIncluded_:1;
 #ifdef DEBUG
     bool ready_:1;
@@ -998,11 +990,11 @@ struct ScriptSource
 
   public:
     ScriptSource()
-      : next(NULL),
+      : refs(0),
         length_(0),
         compressedLength_(0),
-        marked(false),
-        onRuntime_(false),
+        sourceMap_(NULL),
+        sourceRetrievable_(false),
         argumentsNotIncluded_(false)
 #ifdef DEBUG
        ,ready_(true)
@@ -1010,18 +1002,23 @@ struct ScriptSource
     {
         data.source = NULL;
     }
+    void incref() { refs++; }
+    void decref(JSRuntime *rt) {
+        JS_ASSERT(refs != 0);
+        if (--refs == 0)
+            destroy(rt);
+    }
     bool setSourceCopy(JSContext *cx,
                        const jschar *src,
                        uint32_t length,
                        bool argumentsNotIncluded,
                        SourceCompressionToken *tok);
     void setSource(const jschar *src, uint32_t length);
-    void attachToRuntime(JSRuntime *rt);
-    void mark() { marked = true; }
-    bool onRuntime() const { return onRuntime_; }
 #ifdef DEBUG
     bool ready() const { return ready_; }
 #endif
+    void setSourceRetrievable() { sourceRetrievable_ = true; }
+    bool sourceRetrievable() const { return sourceRetrievable_; }
     bool hasSourceData() const { return !!data.source; }
     uint32_t length() const {
         JS_ASSERT(hasSourceData());
@@ -1034,16 +1031,35 @@ struct ScriptSource
     JSFixedString *substring(JSContext *cx, uint32_t start, uint32_t stop);
     size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf);
 
-    // For the GC.
-    static void sweep(JSRuntime *rt);
-
     // XDR handling
     template <XDRMode mode>
     bool performXDR(XDRState<mode> *xdr);
 
+    // Source maps
+    void setSourceMap(jschar *sm);
+    const jschar *sourceMap();
+    bool hasSourceMap() const { return sourceMap_ != NULL; }
+
   private:
     void destroy(JSRuntime *rt);
     bool compressed() { return compressedLength_ != 0; }
+};
+
+class ScriptSourceHolder
+{
+    JSRuntime *rt;
+    ScriptSource *ss;
+  public:
+    ScriptSourceHolder(JSRuntime *rt, ScriptSource *ss)
+      : rt(rt),
+        ss(ss)
+    {
+        ss->incref();
+    }
+    ~ScriptSourceHolder()
+    {
+        ss->decref(rt);
+    }
 };
 
 #ifdef JS_THREADSAFE
@@ -1144,7 +1160,7 @@ struct ScriptFilenameEntry
 struct ScriptFilenameHasher
 {
     typedef const char *Lookup;
-    static HashNumber hash(const char *l) { return JS_HashString(l); }
+    static HashNumber hash(const char *l) { return mozilla::HashString(l); }
     static bool match(const ScriptFilenameEntry *e, const char *l) {
         return strcmp(e->filename, l) == 0;
     }

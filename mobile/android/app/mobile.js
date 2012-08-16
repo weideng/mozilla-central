@@ -539,6 +539,7 @@ pref("ui.dragThresholdY", 25);
 
 pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.enabled", true);
+pref("layers.async-video.enabled", true);
 
 pref("notification.feature.enabled", true);
 
@@ -688,3 +689,9 @@ pref("reader.color_scheme", "light");
 
 // Used to show a first-launch tip in reader
 pref("reader.has_used_toolbar", false);
+
+// Media plugins for libstagefright playback on android
+pref("media.plugins.enabled", false);
+
+// Coalesce touch events to prevent them from flooding the event queue
+pref("dom.event.touch.coalescing.enabled", true);

@@ -662,7 +662,7 @@ nsUrlClassifierStore::BindStatement(const nsUrlClassifierEntry &entry,
   rv = statement->BindInt32ByIndex(5, entry.mTableId);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return true;
+  return NS_OK;
 }
 
 nsresult
@@ -3591,7 +3591,7 @@ nsresult nsUrlClassifierStore::ReadPrefixes(FallibleTArray<PRUint32>& array,
 
     const PRUint8 *blobdomain = mAllPrefixGetStatement->AsSharedBlob(0, &size);
     if (!blobdomain || (size != DOMAIN_LENGTH))
-      return false;
+      return NS_OK;
 
     domainval = *(reinterpret_cast<const PRUint32*>(blobdomain));
 

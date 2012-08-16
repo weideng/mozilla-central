@@ -18,12 +18,11 @@
 
 #include "jsapi.h"
 #include "nsChannelPolicy.h"
-#include "nsContentErrors.h"
+#include "nsError.h"
 #include "nsContentPolicyUtils.h"
 #include "nsContentUtils.h"
 #include "nsDocShellCID.h"
 #include "nsISupportsPrimitives.h"
-#include "nsNetError.h"
 #include "nsNetUtil.h"
 #include "nsScriptLoader.h"
 #include "nsStringGlue.h"

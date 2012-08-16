@@ -181,6 +181,13 @@ public:
    * EndTransaction returns.
    */
   virtual void BeginTransactionWithTarget(gfxContext* aTarget) = 0;
+  
+  enum EndTransactionFlags {
+    END_DEFAULT = 0,
+    END_NO_IMMEDIATE_REDRAW = 1 << 0,  // Do not perform the drawing phase
+    END_NO_COMPOSITE = 1 << 1 // Do not composite after drawing thebes layer contents.
+  };
+
   /**
    * Attempts to end an "empty transaction". There must have been no
    * changes to the layer tree since the BeginTransaction().
@@ -189,7 +196,7 @@ public:
    * returns false, and the caller must proceed with a normal layer tree
    * update and EndTransaction.
    */
-  virtual bool EndEmptyTransaction() = 0;
+  virtual bool EndEmptyTransaction(EndTransactionFlags aFlags = END_DEFAULT) = 0;
 
   /**
    * Function called to draw the contents of each ThebesLayer.
@@ -223,11 +230,6 @@ public:
                                            const nsIntRegion& aRegionToInvalidate,
                                            void* aCallbackData);
 
-  enum EndTransactionFlags {
-    END_DEFAULT = 0,
-    END_NO_IMMEDIATE_REDRAW = 1 << 0  // Do not perform the drawing phase
-  };
-
   /**
    * Finish the construction phase of the transaction, perform the
    * drawing phase, and end the transaction.
@@ -238,6 +240,9 @@ public:
   virtual void EndTransaction(DrawThebesLayerCallback aCallback,
                               void* aCallbackData,
                               EndTransactionFlags aFlags = END_DEFAULT) = 0;
+
+  virtual bool HasShadowManagerInternal() const { return false; }
+  bool HasShadowManager() const { return HasShadowManagerInternal(); }
 
   bool IsSnappingEffectiveTransforms() { return mSnapEffectiveTransforms; } 
 
@@ -393,7 +398,7 @@ public:
    */
   bool HasUserData(void* aKey)
   {
-    return GetUserData(aKey);
+    return mUserData.Has(static_cast<gfx::UserDataKey*>(aKey));
   }
   /**
    * This getter can be used anytime. Ownership is retained by the layer
@@ -419,7 +424,7 @@ public:
    * Dump information about this layer manager and its managed tree to
    * aFile, which defaults to stderr.
    */
-  void Dump(FILE* aFile=NULL, const char* aPrefix="");
+  void Dump(FILE* aFile=NULL, const char* aPrefix="", bool aDumpHtml=false);
   /**
    * Dump information about just this layer manager itself to aFile,
    * which defaults to stderr.
@@ -654,10 +659,10 @@ public:
     Mutated();
   }
 
-  void SetScale(float aXScale, float aYScale)
+  void SetPostScale(float aXScale, float aYScale)
   {
-    mXScale = aXScale;
-    mYScale = aYScale;
+    mPostXScale = aXScale;
+    mPostYScale = aYScale;
     Mutated();
   }
 
@@ -698,8 +703,8 @@ public:
   virtual Layer* GetLastChild() { return nullptr; }
   const gfx3DMatrix GetTransform();
   const gfx3DMatrix& GetBaseTransform() { return mTransform; }
-  float GetXScale() { return mXScale; }
-  float GetYScale() { return mYScale; }
+  float GetPostXScale() { return mPostXScale; }
+  float GetPostYScale() { return mPostYScale; }
   bool GetIsFixedPosition() { return mIsFixedPosition; }
   gfxPoint GetFixedPositionAnchor() { return mAnchor; }
   Layer* GetMaskLayer() { return mMaskLayer; }
@@ -756,7 +761,7 @@ public:
    */
   bool HasUserData(void* aKey)
   {
-    return GetUserData(aKey);
+    return mUserData.Has(static_cast<gfx::UserDataKey*>(aKey));
   }
   /**
    * This getter can be used anytime. Ownership is retained by the layer
@@ -880,7 +885,7 @@ public:
    * Dump information about this layer manager and its managed tree to
    * aFile, which defaults to stderr.
    */
-  void Dump(FILE* aFile=NULL, const char* aPrefix="");
+  void Dump(FILE* aFile=NULL, const char* aPrefix="", bool aDumpHtml=false);
   /**
    * Dump information about just this layer manager itself to aFile,
    * which defaults to stderr.
@@ -953,8 +958,8 @@ protected:
   gfx::UserData mUserData;
   nsIntRegion mVisibleRegion;
   gfx3DMatrix mTransform;
-  float mXScale;
-  float mYScale;
+  float mPostXScale;
+  float mPostYScale;
   gfx3DMatrix mEffectiveTransform;
   AnimationArray mAnimations;
   InfallibleTArray<AnimData> mAnimationData;
@@ -1108,6 +1113,13 @@ public:
     Mutated();
   }
 
+  void SetPreScale(float aXScale, float aYScale)
+  {
+    mPreXScale = aXScale;
+    mPreYScale = aYScale;
+    Mutated();
+  }
+
   virtual void FillSpecificAttributes(SpecificLayerAttributes& aAttrs);
 
   void SortChildrenBy3DZOrder(nsTArray<Layer*>& aArray);
@@ -1119,6 +1131,8 @@ public:
   virtual Layer* GetFirstChild() { return mFirstChild; }
   virtual Layer* GetLastChild() { return mLastChild; }
   const FrameMetrics& GetFrameMetrics() { return mFrameMetrics; }
+  float GetPreXScale() { return mPreXScale; }
+  float GetPreYScale() { return mPreYScale; }
 
   MOZ_LAYER_DECL_NAME("ContainerLayer", TYPE_CONTAINER)
 
@@ -1169,6 +1183,8 @@ protected:
     : Layer(aManager, aImplData),
       mFirstChild(nullptr),
       mLastChild(nullptr),
+      mPreXScale(1.0f),
+      mPreYScale(1.0f),
       mUseIntermediateSurface(false),
       mSupportsComponentAlphaChildren(false),
       mMayHaveReadbackChild(false)
@@ -1192,6 +1208,8 @@ protected:
   Layer* mFirstChild;
   Layer* mLastChild;
   FrameMetrics mFrameMetrics;
+  float mPreXScale;
+  float mPreYScale;
   bool mUseIntermediateSurface;
   bool mSupportsComponentAlphaChildren;
   bool mMayHaveReadbackChild;

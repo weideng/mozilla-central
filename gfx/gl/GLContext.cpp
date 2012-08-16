@@ -80,6 +80,7 @@ static const char *sExtensionNames[] = {
     "GL_OES_EGL_image",
     "GL_OES_EGL_sync",
     "GL_OES_EGL_image_external",
+    "GL_EXT_packed_depth_stencil",
     nullptr
 };
 
@@ -1332,6 +1333,11 @@ GLContext::ChooseGLFormats(ContextFormat& aCF, ColorByteOrder aByteOrder)
     if (SupportsFramebufferMultisample())
         fGetIntegerv(LOCAL_GL_MAX_SAMPLES, (GLint*)&maxSamples);
     samples = NS_MIN(samples, maxSamples);
+
+    // bug 778765
+    if (WorkAroundDriverBugs() && samples == 1) {
+        samples = 0;
+    }
 
     formats.samples = samples;
     aCF.samples = samples;

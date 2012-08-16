@@ -134,6 +134,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   this._pendingDOMRequests = {};
   this._hasRemoteFrame = hasRemoteFrame;
 
+  this._frameLoader = frameLoader;
   this._frameElement = frameLoader.QueryInterface(Ci.nsIFrameLoader).ownerElement;
   if (!this._frameElement) {
     debug("No frame element?");
@@ -156,6 +157,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   }
 
   addMessageListener("hello", this._recvHello);
+  addMessageListener("get-name", this._recvGetName);
   addMessageListener("contextmenu", this._fireCtxMenuEvent);
   addMessageListener("locationchange", this._fireEventFromMsg);
   addMessageListener("loadstart", this._fireEventFromMsg);
@@ -166,7 +168,6 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   addMessageListener("securitychange", this._fireEventFromMsg);
   addMessageListener("error", this._fireEventFromMsg);
   addMessageListener("scroll", this._fireEventFromMsg);
-  addMessageListener("get-mozapp-manifest-url", this._sendMozAppManifestURL);
   addMessageListener("keyevent", this._fireKeyEvent);
   addMessageListener("showmodalprompt", this._handleShowModalPrompt);
   addMessageListener('got-screenshot', this._gotDOMRequestResult);
@@ -178,6 +179,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
 
   let os = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);
   os.addObserver(this, 'ask-children-to-exit-fullscreen', /* ownsWeak = */ true);
+  os.addObserver(this, 'oop-frameloader-crashed', /* ownsWeak = */ true);
 
   function defineMethod(name, fn) {
     XPCNativeWrapper.unwrap(self._frameElement)[name] = function() {
@@ -258,6 +260,10 @@ BrowserElementParent.prototype = {
     if (this._window.document.mozHidden) {
       this._ownerVisibilityChange();
     }
+  },
+
+  _recvGetName: function(data) {
+    return this._frameElement.getAttribute('name');
   },
 
   _fireCtxMenuEvent: function(data) {
@@ -358,10 +364,6 @@ BrowserElementParent.prototype = {
     return new this._window.Event('mozbrowser' + evtName,
                                   { bubbles: true,
                                     cancelable: cancelable });
-  },
-
-  _sendMozAppManifestURL: function(data) {
-    return this._frameElement.getAttribute('mozapp');
   },
 
   /**
@@ -474,12 +476,30 @@ BrowserElementParent.prototype = {
     this._windowUtils.remoteFrameFullscreenReverted();
   },
 
+  _fireFatalError: function() {
+    let evt = this._createEvent('error', {type: 'fatal'},
+                                /* cancelable = */ false);
+    this._frameElement.dispatchEvent(evt);
+  },
+
   observe: function(subject, topic, data) {
-    if (topic == 'ask-children-to-exit-fullscreen' &&
-        this._isAlive() &&
-        this._frameElement.ownerDocument == subject &&
-        this._hasRemoteFrame)
-      this._sendAsyncMsg('exit-fullscreen');
+    switch(topic) {
+    case 'oop-frameloader-crashed':
+      if (this._isAlive() && subject == this._frameLoader) {
+        this._fireFatalError();
+      }
+      break;
+    case 'ask-children-to-exit-fullscreen':
+      if (this._isAlive() &&
+          this._frameElement.ownerDocument == subject &&
+          this._hasRemoteFrame) {
+        this._sendAsyncMsg('exit-fullscreen');
+      }
+      break;
+    default:
+      debug('Unknown topic: ' + topic);
+      break;
+    };
   },
 };
 

@@ -261,9 +261,9 @@ class KeyStringifier<uint32_t> {
 };
 
 template<>
-class KeyStringifier<jsid> {
+class KeyStringifier<HandleId> {
   public:
-    static JSString *toString(JSContext *cx, jsid id) {
+    static JSString *toString(JSContext *cx, HandleId id) {
         return IdToString(cx, id);
     }
 };
@@ -274,9 +274,9 @@ class KeyStringifier<jsid> {
  */
 template<typename KeyType>
 static bool
-PreprocessValue(JSContext *cx, JSObject *holder, KeyType key, MutableHandleValue vp, StringifyContext *scx)
+PreprocessValue(JSContext *cx, HandleObject holder, KeyType key, MutableHandleValue vp, StringifyContext *scx)
 {
-    JSString *keyStr = NULL;
+    RootedString keyStr(cx);
 
     /* Step 2. */
     if (vp.get().isObject()) {
@@ -295,8 +295,8 @@ PreprocessValue(JSContext *cx, JSObject *holder, KeyType key, MutableHandleValue
             if (!cx->stack.pushInvokeArgs(cx, 1, &args))
                 return false;
 
-            args.calleev() = toJSON;
-            args.thisv() = vp;
+            args.setCallee(toJSON);
+            args.setThis(vp);
             args[0] = StringValue(keyStr);
 
             if (!Invoke(cx, args))
@@ -317,8 +317,8 @@ PreprocessValue(JSContext *cx, JSObject *holder, KeyType key, MutableHandleValue
         if (!cx->stack.pushInvokeArgs(cx, 2, &args))
             return false;
 
-        args.calleev() = ObjectValue(*scx->replacer);
-        args.thisv() = ObjectValue(*holder);
+        args.setCallee(ObjectValue(*scx->replacer));
+        args.setThis(ObjectValue(*holder));
         args[0] = StringValue(keyStr);
         args[1] = vp;
 
@@ -417,7 +417,7 @@ JO(JSContext *cx, HandleObject obj, StringifyContext *scx)
         RootedValue outputValue(cx);
         if (!obj->getGeneric(cx, id, &outputValue))
             return false;
-        if (!PreprocessValue(cx, obj, id.get(), &outputValue, scx))
+        if (!PreprocessValue(cx, obj, HandleId(id), &outputValue, scx))
             return false;
         if (IsFilteredValue(outputValue))
             continue;
@@ -629,7 +629,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
             uint32_t len;
             JS_ALWAYS_TRUE(js_GetLengthProperty(cx, replacer, &len));
             if (replacer->isDenseArray())
-                len = JS_MIN(len, replacer->getDenseArrayCapacity());
+                len = Min(len, replacer->getDenseArrayCapacity());
 
             HashSet<jsid> idSet(cx);
             if (!idSet.init(len))
@@ -702,7 +702,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
         /* Step 6. */
         double d;
         JS_ALWAYS_TRUE(ToInteger(cx, space, &d));
-        d = JS_MIN(10, d);
+        d = Min(10.0, d);
         if (d >= 1 && !gap.appendN(' ', uint32_t(d)))
             return false;
     } else if (space.isString()) {
@@ -711,7 +711,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
         if (!str)
             return false;
         JS::Anchor<JSString *> anchor(str);
-        size_t len = JS_MIN(10, space.toString()->length());
+        size_t len = Min(size_t(10), space.toString()->length());
         if (!gap.append(str->chars(), len))
             return false;
     } else {
@@ -737,7 +737,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
     if (!scx.init())
         return false;
 
-    if (!PreprocessValue(cx, wrapper, emptyId.get(), vp, &scx))
+    if (!PreprocessValue(cx, wrapper, HandleId(emptyId), vp, &scx))
         return false;
     if (IsFilteredValue(vp))
         return true;
@@ -747,7 +747,7 @@ js_Stringify(JSContext *cx, MutableHandleValue vp, JSObject *replacer_, Value sp
 
 /* ES5 15.12.2 Walk. */
 static bool
-Walk(JSContext *cx, HandleObject holder, HandleId name, const Value &reviver, MutableHandleValue vp)
+Walk(JSContext *cx, HandleObject holder, HandleId name, HandleValue reviver, MutableHandleValue vp)
 {
     JS_CHECK_RECURSION(cx, return false);
 
@@ -830,7 +830,7 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, const Value &reviver, Mu
     }
 
     /* Step 3. */
-    JSString *key = IdToString(cx, name);
+    RootedString key(cx, IdToString(cx, name));
     if (!key)
         return false;
 
@@ -838,8 +838,8 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, const Value &reviver, Mu
     if (!cx->stack.pushInvokeArgs(cx, 2, &args))
         return false;
 
-    args.calleev() = reviver;
-    args.thisv() = ObjectValue(*holder);
+    args.setCallee(reviver);
+    args.setThis(ObjectValue(*holder));
     args[0] = StringValue(key);
     args[1] = val;
 
@@ -850,7 +850,7 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, const Value &reviver, Mu
 }
 
 static bool
-Revive(JSContext *cx, const Value &reviver, MutableHandleValue vp)
+Revive(JSContext *cx, HandleValue reviver, MutableHandleValue vp)
 {
     RootedObject obj(cx, NewBuiltinClassInstance(cx, &ObjectClass));
     if (!obj)

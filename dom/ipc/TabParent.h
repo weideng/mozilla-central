@@ -24,6 +24,7 @@
 struct gfxMatrix;
 struct JSContext;
 struct JSObject;
+class mozIApplication;
 class nsFrameLoader;
 class nsIDOMElement;
 class nsIURI;
@@ -40,6 +41,9 @@ class RenderFrameParent;
 
 namespace dom {
 
+class ClonedMessageData;
+struct StructuredCloneData;
+
 class ContentDialogParent : public PContentDialogParent {};
 
 class TabParent : public PBrowserParent 
@@ -47,8 +51,10 @@ class TabParent : public PBrowserParent
                 , public nsIAuthPromptProvider
                 , public nsISecureBrowserUI
 {
+    typedef mozilla::dom::ClonedMessageData ClonedMessageData;
+
 public:
-    TabParent();
+    TabParent(mozIApplication* aApp, bool aIsBrowserElement);
     virtual ~TabParent();
     nsIDOMElement* GetOwnerElement() { return mFrameElement; }
     void SetOwnerElement(nsIDOMElement* aElement);
@@ -57,6 +63,9 @@ public:
         mBrowserDOMWindow = aBrowserDOMWindow;
     }
  
+    mozIApplication* GetApp() { return mApp; }
+    bool IsBrowserElement() { return mIsBrowserElement; }
+
     void Destroy();
 
     virtual bool RecvMoveFocus(const bool& aForward);
@@ -68,10 +77,10 @@ public:
                                             bool* aOutWindowOpened);
     virtual bool AnswerCreateWindow(PBrowserParent** retval);
     virtual bool RecvSyncMessage(const nsString& aMessage,
-                                 const nsString& aJSON,
+                                 const ClonedMessageData& aData,
                                  InfallibleTArray<nsString>* aJSONRetVal);
     virtual bool RecvAsyncMessage(const nsString& aMessage,
-                                  const nsString& aJSON);
+                                  const ClonedMessageData& aData);
     virtual bool RecvNotifyIMEFocus(const bool& aFocus,
                                     nsIMEUpdatePreference* aPreference,
                                     PRUint32* aSeqno);
@@ -96,6 +105,8 @@ public:
     virtual bool RecvSetBackgroundColor(const nscolor& aValue);
     virtual bool RecvGetDPI(float* aValue);
     virtual bool RecvGetWidgetNativeData(WindowsHandle* aValue);
+    virtual bool RecvNotifyDOMTouchListenerAdded();
+    virtual bool RecvZoomToRect(const gfxRect& aRect);
     virtual PContentDialogParent* AllocPContentDialog(const PRUint32& aType,
                                                       const nsCString& aName,
                                                       const nsCString& aFeatures,
@@ -115,6 +126,7 @@ public:
     void Show(const nsIntSize& size);
     void UpdateDimensions(const nsRect& rect, const nsIntSize& size);
     void UpdateFrame(const layers::FrameMetrics& aFrameMetrics);
+    void HandleDoubleTap(const nsIntPoint& aPoint);
     void Activate();
     void Deactivate();
 
@@ -131,7 +143,7 @@ public:
                       PRInt32 aCharCode, PRInt32 aModifiers,
                       bool aPreventDefault);
     bool SendRealMouseEvent(nsMouseEvent& event);
-    bool SendMouseScrollEvent(nsMouseScrollEvent& event);
+    bool SendMouseWheelEvent(mozilla::widget::WheelEvent& event);
     bool SendRealKeyEvent(nsKeyEvent& event);
     bool SendRealTouchEvent(nsTouchEvent& event);
 
@@ -142,7 +154,8 @@ public:
                            const nsIntSize& renderSize);
     virtual bool DeallocPDocumentRenderer(PDocumentRendererParent* actor);
 
-    virtual PContentPermissionRequestParent* AllocPContentPermissionRequest(const nsCString& aType, const IPC::URI& uri);
+    virtual PContentPermissionRequestParent*
+    AllocPContentPermissionRequest(const nsCString& aType, const IPC::Principal& aPrincipal);
     virtual bool DeallocPContentPermissionRequest(PContentPermissionRequestParent* actor);
 
     virtual POfflineCacheUpdateParent* AllocPOfflineCacheUpdate(
@@ -172,7 +185,7 @@ public:
 protected:
     bool ReceiveMessage(const nsString& aMessage,
                         bool aSync,
-                        const nsString& aJSON,
+                        const StructuredCloneData* aCloneData,
                         InfallibleTArray<nsString>* aJSONRetVal = nullptr);
 
     virtual bool Recv__delete__() MOZ_OVERRIDE;
@@ -218,6 +231,7 @@ protected:
                                                   uint64_t* aLayersId) MOZ_OVERRIDE;
     virtual bool DeallocPRenderFrame(PRenderFrameParent* aFrame) MOZ_OVERRIDE;
 
+    nsCOMPtr<mozIApplication> mApp;
     // IME
     static TabParent *mIMETabParent;
     nsString mIMECacheText;
@@ -233,6 +247,7 @@ protected:
 
     float mDPI;
     bool mActive;
+    bool mIsBrowserElement;
     bool mShown;
 
 private:

@@ -217,9 +217,11 @@ IndexedDatabaseManager::GetOrCreate()
 
     if (sIsMainProcess) {
       nsCOMPtr<nsIFile> dbBaseDirectory;
-      rv = NS_GetSpecialDirectory(NS_APP_INDEXEDDB_PARENT_DIR, getter_AddRefs(dbBaseDirectory));
+      rv = NS_GetSpecialDirectory(NS_APP_INDEXEDDB_PARENT_DIR,
+                                  getter_AddRefs(dbBaseDirectory));
       if (NS_FAILED(rv)) {
-          rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(dbBaseDirectory));
+          rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
+                                      getter_AddRefs(dbBaseDirectory));
       }
       NS_ENSURE_SUCCESS(rv, nullptr);
 
@@ -231,9 +233,10 @@ IndexedDatabaseManager::GetOrCreate()
 
       // Make a lazy thread for any IO we need (like clearing or enumerating the
       // contents of indexedDB database directories).
-      instance->mIOThread = new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS,
-                                               NS_LITERAL_CSTRING("IndexedDB I/O"),
-                                               LazyIdleThread::ManualShutdown);
+      instance->mIOThread =
+        new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS,
+                           NS_LITERAL_CSTRING("IndexedDB I/O"),
+                           LazyIdleThread::ManualShutdown);
 
       // We need one quota callback object to hand to SQLite.
       instance->mQuotaCallbackSingleton = new QuotaCallback();
@@ -730,7 +733,7 @@ IndexedDatabaseManager::GetIndexedDBQuotaMB()
 
 nsresult
 IndexedDatabaseManager::EnsureOriginIsInitialized(const nsACString& aOrigin,
-                                                  FactoryPrivilege mPrivilege,
+                                                  FactoryPrivilege aPrivilege,
                                                   nsIFile** aDirectory)
 {
 #ifdef DEBUG
@@ -783,10 +786,10 @@ IndexedDatabaseManager::EnsureOriginIsInitialized(const nsACString& aOrigin,
     do_GetService(MOZ_STORAGE_SERVICE_CONTRACTID);
   NS_ENSURE_TRUE(ss, NS_ERROR_FAILURE);
 
-  if (mPrivilege != Chrome) {
+  if (aPrivilege != Chrome) {
     rv = ss->SetQuotaForFilenamePattern(pattern,
                                         GetIndexedDBQuotaMB() * 1024 * 1024,
-                                        mQuotaCallbackSingleton, nsnull);
+                                        mQuotaCallbackSingleton, nullptr);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -875,12 +878,12 @@ IndexedDatabaseManager::EnsureOriginIsInitialized(const nsACString& aOrigin,
 
     nsRefPtr<FileManager> fileManager = new FileManager(aOrigin, databaseName);
 
-    rv = fileManager->Init(fileManagerDirectory, connection);
+    rv = fileManager->Init(fileManagerDirectory, connection, aPrivilege);
     NS_ENSURE_SUCCESS(rv, rv);
 
     fileManagers->AppendElement(fileManager);
 
-    if (mPrivilege != Chrome) {
+    if (aPrivilege != Chrome) {
       rv = ss->UpdateQuotaInformationForFile(file);
       NS_ENSURE_SUCCESS(rv, rv);
     }
@@ -1178,7 +1181,7 @@ IndexedDatabaseManager::RunSynchronizedOp(IDBDatabase* aDatabase,
   FileService* service = FileService::Get();
   TransactionThreadPool* pool = TransactionThreadPool::Get();
 
-  nsTArray<nsRefPtr<IDBDatabase> > databases;
+  nsTArray<IDBDatabase*> databases;
   if (aDatabase) {
     if (service || pool) {
       databases.AppendElement(aDatabase);
@@ -1910,7 +1913,8 @@ IndexedDatabaseManager::InitWindowless(const jsval& aObj, JSContext* aCx)
   JSObject* global = JS_GetGlobalForObject(aCx, obj);
 
   nsRefPtr<IDBFactory> factory;
-  nsresult rv = IDBFactory::Create(aCx, global, getter_AddRefs(factory));
+  nsresult rv =
+    IDBFactory::Create(aCx, global, nullptr, getter_AddRefs(factory));
   NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
   NS_ASSERTION(factory, "This should never fail for chrome!");

@@ -125,6 +125,7 @@ WebappsRegistry.prototype = {
     let requestID = this.getRequestId(request);
     let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
     xhr.open("GET", aURL, true);
+    xhr.channel.loadFlags |= Ci.nsIRequest.VALIDATE_ALWAYS;
 
     xhr.addEventListener("load", (function() {
       if (xhr.status == 200) {
@@ -134,11 +135,13 @@ WebappsRegistry.prototype = {
             Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
           } else {
             let receipts = (aParams && aParams.receipts && Array.isArray(aParams.receipts)) ? aParams.receipts : [];
+            let categories = (aParams && aParams.categories && Array.isArray(aParams.categories)) ? aParams.categories : [];
             cpmm.sendAsyncMessage("Webapps:Install", { app: { installOrigin: installOrigin,
                                                               origin: this._getOrigin(aURL),
                                                               manifestURL: aURL,
                                                               manifest: manifest,
-                                                              receipts: receipts },
+                                                              receipts: receipts,
+                                                              categories: categories },
                                                               from: installURL,
                                                               oid: this._id,
                                                               requestID: requestID });
@@ -190,8 +193,11 @@ WebappsRegistry.prototype = {
 
     let receipts = (aParams && aParams.receipts &&
                     Array.isArray(aParams.receipts)) ? aParams.receipts : [];
+    let categories = (aParams && aParams.categories &&
+                      Array.isArray(aParams.categories)) ? aParams.categories : [];
     cpmm.sendAsyncMessage("Webapps:InstallPackage", { url: aPackageURL,
                                                       receipts: receipts,
+                                                      categories: categories,
                                                       requestID: requestID,
                                                       oid: this._id,
                                                       from: this._window.location.href,

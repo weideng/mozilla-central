@@ -5,6 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+include protocol PBlob;
 include protocol PContent;
 include protocol PContentDialog;
 include protocol PDocumentRenderer;
@@ -14,15 +15,22 @@ include protocol POfflineCacheUpdate;
 include protocol PIndexedDB;
 
 include "gfxMatrix.h";
+include "FrameMetrics.h";
 include "IPC/nsGUIEventIPC.h";
 include "mozilla/dom/TabMessageUtils.h";
+include "mozilla/dom/PermissionMessageUtils.h";
 include "mozilla/layout/RenderFrameUtils.h";
 include "mozilla/net/NeckoMessageUtils.h";
 
+include DOMTypes;
+
 using IPC::URI;
+using IPC::Principal;
 using gfxMatrix;
+using gfxRect;
 using gfxSize;
 using mozilla::layers::LayersBackend;
+using mozilla::layers::FrameMetrics;
 using mozilla::layout::ScrollingBehavior;
 using mozilla::WindowsHandle;
 using nscolor;
@@ -34,6 +42,7 @@ using nsIntSize;
 using nsKeyEvent;
 using nsMouseEvent;
 using nsMouseScrollEvent;
+using mozilla::widget::WheelEvent;
 using nsQueryContentEvent;
 using nsRect;
 using nsSelectionEvent;
@@ -56,7 +65,7 @@ rpc protocol PBrowser
     manages PIndexedDB;
 
 both:
-    AsyncMessage(nsString aMessage, nsString aJSON);
+    AsyncMessage(nsString aMessage, ClonedMessageData aData);
 
 parent:
     /**
@@ -69,7 +78,7 @@ parent:
 
     rpc CreateWindow() returns (PBrowser window);
 
-    sync SyncMessage(nsString aMessage, nsString aJSON)
+    sync SyncMessage(nsString aMessage, ClonedMessageData aData)
       returns (nsString[] retval);
 
     /**
@@ -171,7 +180,20 @@ parent:
     SetCursor(PRUint32 value);
     SetBackgroundColor(nscolor color);
 
-    PContentPermissionRequest(nsCString aType, URI uri);
+    /**
+     * Initiates an asynchronous request for permission for the
+     * provided principal.
+     *
+     * @param aType
+     *   The type of permission to request.
+     * @param aPrincipal
+     *   The principal of the request.
+     *
+     * NOTE: The principal is untrusted in the parent process. Only
+     *       principals that can live in the content process should
+     *       provided.
+     */
+    PContentPermissionRequest(nsCString aType, Principal principal);
 
     PContentDialog(PRUint32 aType, nsCString aName, nsCString aFeatures,
                    PRInt32[] aIntParams, nsString[] aStringParams);
@@ -229,6 +251,14 @@ parent:
                                 nsString aName, nsString aFeatures)
       returns (bool windowOpened);
 
+    NotifyDOMTouchListenerAdded();
+
+    /**
+     * Instructs the TabParent to forward a request to zoom to a rect given in
+     * CSS pixels. This rect is relative to the document.
+     */
+    ZoomToRect(gfxRect aRect);
+
     __delete__();
 
 child:
@@ -247,10 +277,14 @@ child:
 
     UpdateDimensions(nsRect rect, nsIntSize size);
 
-    UpdateFrame(nsIntRect displayPort,
-                nsIntPoint scrollOffset,
-                gfxSize resolution,
-                nsIntRect screenSize);
+    UpdateFrame(FrameMetrics frame);
+
+    /**
+     * Requests handling of a double tap. |point| is in CSS pixels, relative to
+     * the scroll offset. This message is expected to round-trip back to
+     * ZoomToRect() with a rect indicating where we should zoom to.
+     */
+    HandleDoubleTap(nsIntPoint point);
 
     /**
      * Sending an activate message moves focus to the child.
@@ -272,7 +306,7 @@ child:
 
     RealMouseEvent(nsMouseEvent event);
     RealKeyEvent(nsKeyEvent event);
-    MouseScrollEvent(nsMouseScrollEvent event);
+    MouseWheelEvent(WheelEvent event);
     RealTouchEvent(nsTouchEvent event);
 
     /**

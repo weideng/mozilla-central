@@ -1,7 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=4 ts=8 et tw=80 : */
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */ /* vim: set sw=4 ts=8 et tw=80 : */ /* This Source Code Form is subject to the terms of the Mozilla Public * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef mozilla_layers_GestureEventListener_h
@@ -48,6 +45,13 @@ public:
   nsEventStatus HandleInputEvent(const InputData& aEvent);
 
   /**
+   * Cancels any currently active gesture. May not properly handle situations
+   * that require extra work at the gesture's end, like a pinch which only
+   * requests a repaint once it has ended.
+   */
+  void CancelGesture();
+
+  /**
    * Returns the AsyncPanZoomController stored on this class and used for
    * callbacks.
    */
@@ -57,7 +61,12 @@ protected:
   enum GestureState {
     // There's no gesture going on, and we don't think we're about to enter one.
     GESTURE_NONE,
-    // There's a pinch happening, which occurs when there are two touch inputs.
+    // We have detected that two or more fingers are on the screen, but there
+    // hasn't been enough movement yet to make us start actually zooming the
+    // screen.
+    GESTURE_WAITING_PINCH,
+    // There are two or more fingers on the screen, and the user has already
+    // pinched enough for us to start zooming the screen.
     GESTURE_PINCH,
     // A touch start has happened and it may turn into a tap. We use this
     // because, if we put down two fingers and then lift them very quickly, this
@@ -134,6 +143,14 @@ protected:
   GestureState mState;
 
   /**
+   * Total change in span since we detected a pinch gesture. Only used when we
+   * are in the |GESTURE_WAITING_PINCH| state and need to know how far zoomed
+   * out we are compared to our original pinch span. Note that this does _not_
+   * continue to be updated once we jump into the |GESTURE_PINCH| state.
+   */
+  float mSpanChange;
+
+  /**
    * Previous span calculated for the purposes of setting inside a
    * PinchGestureInput.
    */
@@ -163,6 +180,13 @@ protected:
    * we can cancel it if a double tap actually comes in.
    */
   CancelableTask *mDoubleTapTimeoutTask;
+
+  /**
+   * Position of the last touch starting. This is only valid during an attempt
+   * to determine if a touch is a tap. This means that it is used in both the
+   * "GESTURE_WAITING_SINGLE_TAP" and "GESTURE_WAITING_DOUBLE_TAP" states.
+   */
+  nsIntPoint mTouchStartPosition;
 };
 
 }

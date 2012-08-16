@@ -998,8 +998,11 @@ class JS_PUBLIC_API(AutoCheckRequestDepth)
 #endif /* JS_THREADSAFE && DEBUG */
 
 #ifdef DEBUG
-/* Assert that we're not doing GC on cx, that we're in a request as
-   needed, and that the compartments for cx and v are correct. */
+/*
+ * Assert that we're not doing GC on cx, that we're in a request as
+ * needed, and that the compartments for cx and v are correct.
+ * Also check that GC would be safe at this point.
+ */
 JS_PUBLIC_API(void)
 AssertArgumentsAreSane(JSContext *cx, const Value &v);
 #else
@@ -1050,15 +1053,16 @@ class JS_PUBLIC_API(AutoGCRooter) {
         STRING =      -14, /* js::AutoStringRooter */
         IDVECTOR =    -15, /* js::AutoIdVector */
         OBJVECTOR =   -16, /* js::AutoObjectVector */
-        SCRIPTVECTOR =-17, /* js::AutoScriptVector */
-        PROPDESC =    -18, /* js::PropDesc::AutoRooter */
-        SHAPERANGE =  -19, /* js::Shape::Range::AutoRooter */
-        STACKSHAPE =  -20, /* js::StackShape::AutoRooter */
-        STACKBASESHAPE=-21,/* js::StackBaseShape::AutoRooter */
-        BINDINGS =    -22, /* js::Bindings::AutoRooter */
-        GETTERSETTER =-23, /* js::AutoRooterGetterSetter */
-        REGEXPSTATICS=-24, /* js::RegExpStatics::AutoRooter */
-        HASHABLEVALUE=-25
+        STRINGVECTOR =-17, /* js::AutoStringVector */
+        SCRIPTVECTOR =-18, /* js::AutoScriptVector */
+        PROPDESC =    -19, /* js::PropDesc::AutoRooter */
+        SHAPERANGE =  -20, /* js::Shape::Range::AutoRooter */
+        STACKSHAPE =  -21, /* js::StackShape::AutoRooter */
+        STACKBASESHAPE=-22,/* js::StackBaseShape::AutoRooter */
+        BINDINGS =    -23, /* js::Bindings::AutoRooter */
+        GETTERSETTER =-24, /* js::AutoRooterGetterSetter */
+        REGEXPSTATICS=-25, /* js::RegExpStatics::AutoRooter */
+        HASHABLEVALUE=-26
     };
 
   private:
@@ -1252,8 +1256,12 @@ class AutoVectorRooter : protected AutoGCRooter
     }
 
     size_t length() const { return vector.length(); }
+    bool empty() const { return vector.empty(); }
 
     bool append(const T &v) { return vector.append(v); }
+    bool append(const AutoVectorRooter<T> &other) {
+        return vector.append(other.vector);
+    }
 
     /* For use when space has already been reserved. */
     void infallibleAppend(const T &v) { vector.infallibleAppend(v); }
@@ -1375,8 +1383,15 @@ class CallReceiver
     friend CallReceiver CallReceiverFromArgv(Value *);
     Value *base() const { return argv_ - 2; }
     JSObject &callee() const { JS_ASSERT(!usedRval_); return argv_[-2].toObject(); }
-    Value &calleev() const { JS_ASSERT(!usedRval_); return argv_[-2]; }
-    Value &thisv() const { return argv_[-1]; }
+
+    JS::HandleValue calleev() const {
+        JS_ASSERT(!usedRval_);
+        return JS::HandleValue::fromMarkedLocation(&argv_[-2]);
+    }
+
+    JS::HandleValue thisv() const {
+        return JS::HandleValue::fromMarkedLocation(&argv_[-1]);
+    }
 
     JS::MutableHandleValue rval() const {
         setUsedRval();
@@ -1388,9 +1403,13 @@ class CallReceiver
         return argv_ - 1;
     }
 
-    void setCallee(Value calleev) {
+    void setCallee(Value calleev) const {
         clearUsedRval();
-        this->calleev() = calleev;
+        argv_[-2] = calleev;
+    }
+
+    void setThis(Value thisv) const {
+        argv_[-1] = thisv;
     }
 };
 
@@ -2242,6 +2261,16 @@ JSVAL_TO_PRIVATE(jsval v)
     return JSVAL_TO_PRIVATE_PTR_IMPL(JSVAL_TO_IMPL(v));
 }
 
+static JS_ALWAYS_INLINE jsval
+JS_NumberValue(double d)
+{
+    int32_t i;
+    d = JS_CANONICALIZE_NAN(d);
+    if (MOZ_DOUBLE_IS_INT32(d, &i))
+        return INT_TO_JSVAL(i);
+    return DOUBLE_TO_JSVAL(d);
+}
+
 /************************************************************************/
 
 /*
@@ -2690,10 +2719,13 @@ JS_ALWAYS_INLINE bool
 ToNumber(JSContext *cx, const Value &v, double *out)
 {
     AssertArgumentsAreSane(cx, v);
+    {
+        JS::SkipRoot root(cx, &v);
+        MaybeCheckStackRoots(cx);
+    }
 
     if (v.isNumber()) {
         *out = v.toNumber();
-        MaybeCheckStackRoots(cx);
         return true;
     }
     return js::ToNumberSlow(cx, v, out);
@@ -2738,27 +2770,128 @@ JS_DoubleToUint32(double d);
 extern JS_PUBLIC_API(JSBool)
 JS_ValueToECMAInt32(JSContext *cx, jsval v, int32_t *ip);
 
+/*
+ * Convert a value to a number, then to an int64_t, according to the WebIDL
+ * rules for ToInt64: http://dev.w3.org/2006/webapi/WebIDL/#es-long-long
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_ValueToInt64(JSContext *cx, jsval v, int64_t *ip);
+
+/*
+ * Convert a value to a number, then to an uint64_t, according to the WebIDL
+ * rules for ToUint64: http://dev.w3.org/2006/webapi/WebIDL/#es-unsigned-long-long
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_ValueToUint64(JSContext *cx, jsval v, uint64_t *ip);
+
 #ifdef __cplusplus
 namespace js {
-/*
- * DO NOT CALL THIS.  Use JS::ToInt32
- */
+/* DO NOT CALL THIS.  Use JS::ToInt16. */
+extern JS_PUBLIC_API(bool)
+ToUint16Slow(JSContext *cx, const JS::Value &v, uint16_t *out);
+
+/* DO NOT CALL THIS.  Use JS::ToInt32. */
 extern JS_PUBLIC_API(bool)
 ToInt32Slow(JSContext *cx, const JS::Value &v, int32_t *out);
+
+/* DO NOT CALL THIS.  Use JS::ToUint32. */
+extern JS_PUBLIC_API(bool)
+ToUint32Slow(JSContext *cx, const JS::Value &v, uint32_t *out);
+
+/* DO NOT CALL THIS. Use JS::ToInt64. */
+extern JS_PUBLIC_API(bool)
+ToInt64Slow(JSContext *cx, const JS::Value &v, int64_t *out);
+
+/* DO NOT CALL THIS. Use JS::ToUint64. */
+extern JS_PUBLIC_API(bool)
+ToUint64Slow(JSContext *cx, const JS::Value &v, uint64_t *out);
 } /* namespace js */
 
 namespace JS {
 
 JS_ALWAYS_INLINE bool
+ToUint16(JSContext *cx, const js::Value &v, uint16_t *out)
+{
+    AssertArgumentsAreSane(cx, v);
+    {
+        SkipRoot skip(cx, &v);
+        MaybeCheckStackRoots(cx);
+    }
+
+    if (v.isInt32()) {
+        *out = uint16_t(v.toInt32());
+        return true;
+    }
+    return js::ToUint16Slow(cx, v, out);
+}
+
+JS_ALWAYS_INLINE bool
 ToInt32(JSContext *cx, const js::Value &v, int32_t *out)
 {
     AssertArgumentsAreSane(cx, v);
+    {
+        JS::SkipRoot root(cx, &v);
+        MaybeCheckStackRoots(cx);
+    }
+
     if (v.isInt32()) {
         *out = v.toInt32();
         return true;
     }
     return js::ToInt32Slow(cx, v, out);
 }
+
+JS_ALWAYS_INLINE bool
+ToUint32(JSContext *cx, const js::Value &v, uint32_t *out)
+{
+    AssertArgumentsAreSane(cx, v);
+    {
+        JS::SkipRoot root(cx, &v);
+        MaybeCheckStackRoots(cx);
+    }
+
+    if (v.isInt32()) {
+        *out = uint32_t(v.toInt32());
+        return true;
+    }
+    return js::ToUint32Slow(cx, v, out);
+}
+
+JS_ALWAYS_INLINE bool
+ToInt64(JSContext *cx, const js::Value &v, int64_t *out)
+{
+    AssertArgumentsAreSane(cx, v);
+    {
+        JS::SkipRoot skip(cx, &v);
+        MaybeCheckStackRoots(cx);
+    }
+
+    if (v.isInt32()) {
+        *out = int64_t(v.toInt32());
+        return true;
+    }
+
+    return js::ToInt64Slow(cx, v, out);
+}
+
+JS_ALWAYS_INLINE bool
+ToUint64(JSContext *cx, const js::Value &v, uint64_t *out)
+{
+    AssertArgumentsAreSane(cx, v);
+    {
+        SkipRoot skip(cx, &v);
+        MaybeCheckStackRoots(cx);
+    }
+
+    if (v.isInt32()) {
+        /* Account for sign extension of negatives into the longer 64bit space. */
+        *out = uint64_t(int64_t(v.toInt32()));
+        return true;
+    }
+
+    return js::ToUint64Slow(cx, v, out);
+}
+
 
 } /* namespace JS */
 #endif /* __cplusplus */
@@ -3104,12 +3237,11 @@ JS_StringToVersion(const char *string);
                                                    strict mode for all code
                                                    without requiring
                                                    "use strict" annotations. */
-/* JS_BIT(20) is taken in jsfriendapi.h! */
 
 /* Options which reflect compile-time properties of scripts. */
 #define JSCOMPILEOPTION_MASK    (JSOPTION_ALLOW_XML | JSOPTION_MOAR_XML)
 
-#define JSRUNOPTION_MASK        (JS_BITMASK(21) & ~JSCOMPILEOPTION_MASK)
+#define JSRUNOPTION_MASK        (JS_BITMASK(20) & ~JSCOMPILEOPTION_MASK)
 #define JSALLOPTION_MASK        (JSCOMPILEOPTION_MASK | JSRUNOPTION_MASK)
 
 extern JS_PUBLIC_API(uint32_t)
@@ -3475,8 +3607,6 @@ JS_updateMallocCounter(JSContext *cx, size_t nbytes);
 extern JS_PUBLIC_API(char *)
 JS_strdup(JSContext *cx, const char *s);
 
-extern JS_PUBLIC_API(JSBool)
-JS_NewNumberValue(JSContext *cx, double d, jsval *rval);
 
 /*
  * A GC root is a pointer to a jsval, JSObject * or JSString * that itself
@@ -4221,22 +4351,54 @@ struct JSConstDoubleSpec {
     uint8_t         spare[3];
 };
 
+typedef struct JSJitInfo JSJitInfo;
+
+/*
+ * Wrappers to replace {Strict,}PropertyOp for JSPropertySpecs. This will allow
+ * us to pass one JSJitInfo per function with the property spec, without
+ * additional field overhead.
+ */
+typedef struct JSStrictPropertyOpWrapper {
+    JSStrictPropertyOp  op;
+    const JSJitInfo     *info;
+} JSStrictPropertyOpWrapper;
+
+typedef struct JSPropertyOpWrapper {
+    JSPropertyOp        op;
+    const JSJitInfo     *info;
+} JSPropertyOpWrapper;
+
+/*
+ * Wrapper to do as above, but for JSNatives for JSFunctionSpecs.
+ */
+typedef struct JSNativeWrapper {
+    JSNative        op;
+    const JSJitInfo *info;
+} JSNativeWrapper;
+
+/*
+ * Macro static initializers which make it easy to pass no JSJitInfo as part of a
+ * JSPropertySpec or JSFunctionSpec.
+ */
+#define JSOP_WRAPPER(op) {op, NULL}
+#define JSOP_NULLWRAPPER JSOP_WRAPPER(NULL)
+
 /*
  * To define an array element rather than a named property member, cast the
  * element's index to (const char *) and initialize name with it, and set the
  * JSPROP_INDEX bit in flags.
  */
 struct JSPropertySpec {
-    const char            *name;
-    int8_t                tinyid;
-    uint8_t               flags;
-    JSPropertyOp          getter;
-    JSStrictPropertyOp    setter;
+    const char                  *name;
+    int8_t                      tinyid;
+    uint8_t                     flags;
+    JSPropertyOpWrapper         getter;
+    JSStrictPropertyOpWrapper   setter;
 };
 
 struct JSFunctionSpec {
     const char      *name;
-    JSNative        call;
+    JSNativeWrapper call;
     uint16_t        nargs;
     uint16_t        flags;
 };
@@ -4250,12 +4412,14 @@ struct JSFunctionSpec {
 /*
  * Initializer macros for a JSFunctionSpec array element. JS_FN (whose name
  * pays homage to the old JSNative/JSFastNative split) simply adds the flag
- * JSFUN_STUB_GSOPS.
+ * JSFUN_STUB_GSOPS. JS_FNINFO allows the simple adding of JSJitInfos.
  */
 #define JS_FS(name,call,nargs,flags)                                          \
-    {name, call, nargs, flags}
+    {name, JSOP_WRAPPER(call), nargs, flags}
 #define JS_FN(name,call,nargs,flags)                                          \
-    {name, call, nargs, (flags) | JSFUN_STUB_GSOPS}
+    {name, JSOP_WRAPPER(call), nargs, (flags) | JSFUN_STUB_GSOPS}
+#define JS_FNINFO(name,call,info,nargs,flags)                                 \
+    {name,{call,info},nargs,flags}
 
 extern JS_PUBLIC_API(JSObject *)
 JS_InitClass(JSContext *cx, JSObject *obj, JSObject *parent_proto,
@@ -4955,7 +5119,7 @@ JS_END_EXTERN_C
 namespace JS {
 
 /* Options for JavaScript compilation. */
-struct CompileOptions {
+struct JS_PUBLIC_API(CompileOptions) {
     JSPrincipals *principals;
     JSPrincipals *originPrincipals;
     JSVersion version;
@@ -4966,8 +5130,13 @@ struct CompileOptions {
     bool compileAndGo;
     bool noScriptRval;
     bool allowIntrinsicsCalls;
+    enum SourcePolicy {
+        NO_SOURCE,
+        LAZY_SOURCE,
+        SAVE_SOURCE
+    } sourcePolicy;
 
-    CompileOptions(JSContext *cx);
+    explicit CompileOptions(JSContext *cx);
     CompileOptions &setPrincipals(JSPrincipals *p) { principals = p; return *this; }
     CompileOptions &setOriginPrincipals(JSPrincipals *p) { originPrincipals = p; return *this; }
     CompileOptions &setVersion(JSVersion v) { version = v; versionSet = true; return *this; }
@@ -4978,6 +5147,7 @@ struct CompileOptions {
     CompileOptions &setCompileAndGo(bool cng) { compileAndGo = cng; return *this; }
     CompileOptions &setNoScriptRval(bool nsr) { noScriptRval = nsr; return *this; }
     CompileOptions &setAllowIntrinsicsCalls(bool aic) { allowIntrinsicsCalls = aic; return *this; }
+    CompileOptions &setSourcePolicy(SourcePolicy sp) { sourcePolicy = sp; return *this; }
 };
 
 extern JS_PUBLIC_API(JSScript *)

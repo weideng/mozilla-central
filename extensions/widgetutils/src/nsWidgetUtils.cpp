@@ -33,7 +33,7 @@
 #include "nsIDOMCompositionListener.h"
 #include "nsIDOMTextListener.h"
 #include "nsIDOMMouseEvent.h"
-#include "nsIDOMNSEvent.h"
+#include "nsIDOMWheelEvent.h"
 #include "nsIView.h"
 #include "nsGUIEvent.h"
 #include "nsIViewManager.h"
@@ -41,6 +41,8 @@
 #include "nsIDocShellTreeItem.h"
 #include "nsIContent.h"
 #include "nsITimer.h"
+
+using namespace mozilla;
 
 const int MIN_INT =((int) (1 << (sizeof(int) * 8 - 1)));
 
@@ -114,13 +116,12 @@ nsWidgetUtils::Init()
 nsresult
 nsWidgetUtils::UpdateFromEvent(nsIDOMEvent *aDOMEvent)
 {
-  nsCOMPtr <nsIDOMMouseEvent> mouseEvent;
-  mouseEvent = do_QueryInterface(aDOMEvent);
+  nsCOMPtr<nsIDOMMouseEvent> mouseEvent = do_QueryInterface(aDOMEvent);
   if (!mouseEvent)
     return NS_OK;
 
-  ((nsIDOMMouseEvent*)mouseEvent)->GetScreenX(&g_lastX);
-  ((nsIDOMMouseEvent*)mouseEvent)->GetScreenY(&g_lastY);
+  mouseEvent->GetScreenX(&g_lastX);
+  mouseEvent->GetScreenY(&g_lastY);
 
   nsCOMPtr<nsIDOMWindow> mWindow;
   nsCOMPtr<nsIDOMNode> mNode;
@@ -129,10 +130,8 @@ nsWidgetUtils::UpdateFromEvent(nsIDOMEvent *aDOMEvent)
   PRUint32 type = 0;
   bool isXul = false;
   {
-    nsCOMPtr <nsIDOMNSEvent> aEvent = do_QueryInterface(aDOMEvent);
     nsCOMPtr<nsIDOMEventTarget> eventOrigTarget;
-    if (aEvent)
-      aEvent->GetOriginalTarget(getter_AddRefs(eventOrigTarget));
+    aDOMEvent->GetOriginalTarget(getter_AddRefs(eventOrigTarget));
     if (eventOrigTarget)
       mOrigNode = do_QueryInterface(eventOrigTarget);
     isXul = IsXULNode(mOrigNode, &type);
@@ -236,27 +235,20 @@ nsWidgetUtils::MouseMove(nsIDOMEvent* aDOMEvent)
     if (NS_FAILED(UpdateFromEvent(aDOMEvent)))
       return NS_OK;
 
-  nsEventStatus statusX;
-  nsMouseScrollEvent scrollEventX(true, NS_MOUSE_SCROLL, mWidget);
-  scrollEventX.delta = dx;
-  scrollEventX.scrollFlags = nsMouseScrollEvent::kIsHorizontal | nsMouseScrollEvent::kHasPixels;
-  mViewManager->DispatchEvent(&scrollEventX, aView, &statusX);
-  if(statusX != nsEventStatus_eIgnore ){
-    if (dx > 5)
+  nsEventStatus status;
+  widget::WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, mWidget);
+  wheelEvent.deltaMode = nsIDOMWheelEvent::DOM_DELTA_LINE;
+  wheelEvent.deltaX = wheelEvent.lineOrPageDeltaX = dx;
+  wheelEvent.deltaY = wheelEvent.lineOrPageDeltaY = dy;
+  mViewManager->DispatchEvent(&wheelEvent, aView, &status);
+  if (status != nsEventStatus_eIgnore) {
+    if (dx > 5 || dy > 5) {
       g_panning = true;
+    }
     g_lastX = x;
-  }
-
-  nsEventStatus statusY;
-  nsMouseScrollEvent scrollEventY(true, NS_MOUSE_SCROLL, mWidget);
-  scrollEventY.delta = dy;
-  scrollEventY.scrollFlags = nsMouseScrollEvent::kIsVertical | nsMouseScrollEvent::kHasPixels;
-  mViewManager->DispatchEvent(&scrollEventY, aView, &statusY);
-  if(statusY != nsEventStatus_eIgnore ){
-    if (dy > 5)
-      g_panning = true;
     g_lastY = y;
   }
+
   if (g_panning) {
      aDOMEvent->StopPropagation();
      aDOMEvent->PreventDefault();

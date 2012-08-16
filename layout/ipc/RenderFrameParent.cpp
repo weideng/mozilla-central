@@ -249,7 +249,7 @@ TransformShadowTree(nsDisplayListBuilder* aBuilder, nsFrameLoader* aFrameLoader,
 
   const FrameMetrics* metrics = GetFrameMetrics(aLayer);
 
-  gfx3DMatrix shadowTransform = aLayer->GetBaseTransform();
+  gfx3DMatrix shadowTransform = aLayer->GetTransform();
   ViewTransform layerTransform = aTransform;
 
   if (metrics && metrics->IsScrollable()) {
@@ -296,6 +296,18 @@ TransformShadowTree(nsDisplayListBuilder* aBuilder, nsFrameLoader* aFrameLoader,
       shadow->SetShadowClipRect(&transformedClipRect);
     }
   }
+
+  // The transform already takes the resolution scale into account.  Since we
+  // will apply the resolution scale again when computing the effective
+  // transform, we must apply the inverse resolution scale here.
+  if (ContainerLayer* c = aLayer->AsContainerLayer()) {
+    shadowTransform.Scale(1.0f/c->GetPreXScale(),
+                          1.0f/c->GetPreYScale(),
+                          1);
+  }
+  shadowTransform.ScalePost(1.0f/aLayer->GetPostXScale(),
+                            1.0f/aLayer->GetPostYScale(),
+                            1);
 
   shadow->SetShadowTransform(shadowTransform);
   for (Layer* child = aLayer->GetFirstChild();
@@ -480,6 +492,23 @@ public:
     }
   }
 
+  virtual void HandleDoubleTap(const nsIntPoint& aPoint) MOZ_OVERRIDE
+  {
+    if (MessageLoop::current() != mUILoop) {
+      // We have to send this message from the "UI thread" (main
+      // thread).
+      mUILoop->PostTask(
+        FROM_HERE,
+        NewRunnableMethod(this, &RemoteContentController::HandleDoubleTap,
+                          aPoint));
+      return;
+    }
+    if (mRenderFrame) {
+      TabParent* browser = static_cast<TabParent*>(mRenderFrame->Manager());
+      browser->HandleDoubleTap(aPoint);
+    }
+  }
+
   void ClearRenderFrame() { mRenderFrame = nullptr; }
 
 private:
@@ -612,6 +641,8 @@ RenderFrameParent::BuildLayer(nsDisplayListBuilder* aBuilder,
 
   if (mContainer) {
     ClearContainer(mContainer);
+    mContainer->SetPreScale(1.0f, 1.0f);
+    mContainer->SetPostScale(1.0f, 1.0f);
   }
 
   ContainerLayer* shadowRoot = GetRootLayer();
@@ -703,6 +734,15 @@ bool
 RenderFrameParent::RecvNotifyCompositorTransaction()
 {
   TriggerRepaint();
+  return true;
+}
+
+bool
+RenderFrameParent::RecvCancelDefaultPanZoom()
+{
+  if (mPanZoomController) {
+    mPanZoomController->CancelDefaultPanZoom();
+  }
   return true;
 }
 
@@ -836,6 +876,22 @@ RenderFrameParent::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   return aLists.Content()->AppendNewToTop(
     new (aBuilder) nsDisplayClip(aBuilder, aFrame, &shadowTree,
                                  bounds));
+}
+
+void
+RenderFrameParent::NotifyDOMTouchListenerAdded()
+{
+  if (mPanZoomController) {
+    mPanZoomController->NotifyDOMTouchListenerAdded();
+  }
+}
+
+void
+RenderFrameParent::ZoomToRect(const gfxRect& aRect)
+{
+  if (mPanZoomController) {
+    mPanZoomController->ZoomToRect(aRect);
+  }
 }
 
 }  // namespace layout

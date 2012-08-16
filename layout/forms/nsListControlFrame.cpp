@@ -33,7 +33,6 @@
 #include "nsIComponentManager.h"
 #include "nsFontMetrics.h"
 #include "nsIScrollableFrame.h"
-#include "nsIDOMNSEvent.h"
 #include "nsGUIEvent.h"
 #include "nsIServiceManager.h"
 #include "nsINodeInfo.h"
@@ -1094,7 +1093,7 @@ nsListControlFrame::OnOptionSelected(PRInt32 aIndex, bool aSelected)
   return NS_OK;
 }
 
-PRIntn
+int
 nsListControlFrame::GetSkipSides() const
 {    
     // Don't skip any sides during border rendering

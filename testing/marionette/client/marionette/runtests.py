@@ -27,9 +27,9 @@ except ImportError:
     import sys
     sys.exit(1)
 
-
 from marionette import Marionette
 from marionette_test import MarionetteJSTestCase
+
 
 class MarionetteTestResult(unittest._TextTestResult):
 
@@ -78,6 +78,7 @@ class MarionetteTestResult(unittest._TextTestResult):
                 else:
                     self.perfdata.join_results(testcase.perfdata)
 
+
 class MarionetteTextTestRunner(unittest.TextTestRunner):
 
     resultclass = MarionetteTestResult
@@ -88,8 +89,10 @@ class MarionetteTextTestRunner(unittest.TextTestRunner):
     def run(self, test):
         "Run the given test case or test suite."
         result = self._makeResult()
-        result.failfast = self.failfast
-        result.buffer = self.buffer
+        if hasattr(self, 'failfast'):
+            result.failfast = self.failfast
+        if hasattr(self, 'buffer'):
+            result.buffer = self.buffer
         startTime = time.time()
         startTestRun = getattr(result, 'startTestRun', None)
         if startTestRun is not None:
@@ -309,6 +312,9 @@ class MarionetteTestRunner(object):
         if self.marionette.emulator:
             self.marionette.emulator.close()
             self.marionette.emulator = None
+        if self.marionette.instance:
+            self.marionette.instance.close()
+            self.marionette.instance = None
         self.marionette = None
 
         if self.xml_output:
@@ -364,10 +370,18 @@ class MarionetteTestRunner(object):
                     self.logger.info("Using machine_name: %s" % machine_name)
                 os_name = platform.system()
                 os_version = platform.release()
-                self.perfrequest = datazilla.DatazillaRequest(server=options.perfserv, machine_name=machine_name, os=os_name, os_version=os_version,
-                                         platform=manifest.get("platform")[0], build_name=manifest.get("build_name")[0], 
-                                         version=manifest.get("version")[0], revision=self.revision,
-                                         branch=manifest.get("branch")[0], id=os.getenv('BUILD_ID'), test_date=int(time.time()))
+                self.perfrequest = datazilla.DatazillaRequest(
+                             server=options.perfserv,
+                             machine_name=machine_name,
+                             os=os_name,
+                             os_version=os_version,
+                             platform=manifest.get("platform")[0],
+                             build_name=manifest.get("build_name")[0],
+                             version=manifest.get("version")[0],
+                             revision=self.revision,
+                             branch=manifest.get("branch")[0],
+                             id=os.getenv('BUILD_ID'),
+                             test_date=int(time.time()))
 
             manifest_tests = manifest.get(**testargs)
 
@@ -458,13 +472,19 @@ class MarionetteTestRunner(object):
                                                     results in results_list])))
         assembly.setAttribute('passed', str(sum([results.passed for
                                                      results in results_list])))
-        assembly.setAttribute('failed', str(sum([len(results.failures) +
-                                                 len(results.errors) +
-                                                 len(results.unexpectedSuccesses)
+
+        def failed_count(results):
+            count = len(results.failures) + len(results.errors)
+            if hasattr(results, 'unexpectedSuccesses'):
+                count += len(results.unexpectedSuccesses)
+            return count
+
+        assembly.setAttribute('failed', str(sum([failed_count(results)
                                                  for results in results_list])))
-        assembly.setAttribute('skipped', str(sum([len(results.skipped) +
-                                                  len(results.expectedFailures)
-                                                  for results in results_list])))
+        if hasattr(results, 'skipped'):
+            assembly.setAttribute('skipped', str(sum([len(results.skipped) +
+                                                      len(results.expectedFailures)
+                                                      for results in results_list])))
 
         for results in results_list:
             classes = {} # str -> xml class element
@@ -475,15 +495,18 @@ class MarionetteTestRunner(object):
             for tup in results.failures:
                 _extract_xml(*tup, result='Fail')
 
-            for test in results.unexpectedSuccesses:
-                # unexpectedSuccesses is a list of Testcases only, no tuples
-                _extract_xml(test, text='TEST-UNEXPECTED-PASS', result='Fail')
+            if hasattr(results, 'unexpectedSuccesses'):
+                for test in results.unexpectedSuccesses:
+                    # unexpectedSuccesses is a list of Testcases only, no tuples
+                    _extract_xml(test, text='TEST-UNEXPECTED-PASS', result='Fail')
 
-            for tup in results.skipped:
-                _extract_xml(*tup, result='Skip')
+            if hasattr(results, 'skipped'):
+                for tup in results.skipped:
+                    _extract_xml(*tup, result='Skip')
 
-            for tup in results.expectedFailures:
-                _extract_xml(*tup, result='Skip')
+            if hasattr(results, 'expectedFailures'):
+                for tup in results.expectedFailures:
+                    _extract_xml(*tup, result='Skip')
 
             for test in results.tests_passed:
                 _extract_xml(test)

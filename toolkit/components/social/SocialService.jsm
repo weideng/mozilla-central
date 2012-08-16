@@ -8,10 +8,10 @@ const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/MozSocialAPI.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "getFrameWorkerHandle", "resource://gre/modules/FrameWorker.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "WorkerAPI", "resource://gre/modules/WorkerAPI.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "MozSocialAPI", "resource://gre/modules/MozSocialAPI.jsm");
 
 /**
  * The SocialService is the public API to social providers - it tracks which
@@ -27,8 +27,8 @@ let SocialServiceInternal = {
   }
 };
 
-XPCOMUtils.defineLazyGetter(SocialServiceInternal, "providers", function () {
-  // Initialize the service (add a pref observer)
+function initService() {
+  // Add a pref observer for the enabled state
   function prefObserver(subject, topic, data) {
     SocialService._setEnabled(Services.prefs.getBoolPref("social.enabled"));
   }
@@ -39,9 +39,23 @@ XPCOMUtils.defineLazyGetter(SocialServiceInternal, "providers", function () {
   }, "xpcom-shutdown", false);
 
   // Initialize the MozSocialAPI
-  MozSocialAPI.enabled = SocialServiceInternal.enabled;
+  if (SocialServiceInternal.enabled)
+    MozSocialAPI.enabled = true;
+}
 
-  // Now retrieve the providers
+XPCOMUtils.defineLazyGetter(SocialServiceInternal, "providers", function () {
+  initService();
+
+  // Don't load any providers from prefs if the test pref is set
+  let skipLoading = false;
+  try {
+    skipLoading = Services.prefs.getBoolPref("social.skipLoadingProviders");
+  } catch (ex) {}
+
+  if (skipLoading)
+    return {};
+
+  // Now retrieve the providers from prefs
   let providers = {};
   let MANIFEST_PREFS = Services.prefs.getBranch("social.manifest.");
   let prefs = MANIFEST_PREFS.getChildList("", {});
@@ -200,6 +214,20 @@ SocialProvider.prototype = {
   // Called by the workerAPI to update our profile information.
   updateUserProfile: function(profile) {
     this.profile = profile;
+
+    // Sanitize the portrait from any potential script-injection.
+    if (profile.portrait) {
+      try {
+        let portraitUri = Services.io.newURI(profile.portrait, null, null);
+
+        let scheme = portraitUri ? portraitUri.scheme : "";
+        if (scheme != "data" && scheme != "http" && scheme != "https") {
+          profile.portrait = "";
+        }
+      } catch (ex) {
+        profile.portrait = "";
+      }
+    }
 
     if (profile.iconURL)
       this.iconURL = profile.iconURL;

@@ -27,7 +27,7 @@
 #include "nsChannelClassifier.h"
 #include "nsIRedirectResultListener.h"
 #include "mozilla/TimeStamp.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsAlgorithm.h"
 #include "sampler.h"
 #include "nsIConsoleService.h"
@@ -145,11 +145,11 @@ MaybeMarkCacheEntryValid(const void * channel,
         nsresult rv = cacheEntry->MarkValid();
         LOG(("Marking cache entry valid "
              "[channel=%p, entry=%p, access=%d, result=%d]",
-             channel, cacheEntry, PRIntn(cacheAccess), PRIntn(rv)));
+             channel, cacheEntry, int(cacheAccess), int(rv)));
     } else {
         LOG(("Not marking read-only cache entry valid "
              "[channel=%p, entry=%p, access=%d]", 
-             channel, cacheEntry, PRIntn(cacheAccess)));
+             channel, cacheEntry, int(cacheAccess)));
     }
 }
 
@@ -2891,7 +2891,7 @@ HttpCacheQuery::OnCacheEntryAvailable(nsICacheEntryDescriptor *entry,
 {
     LOG(("HttpCacheQuery::OnCacheEntryAvailable [channel=%p entry=%p "
          "access=%x status=%x, mRunConut=%d]\n", mChannel.get(), entry, access,
-         status, PRIntn(mRunCount)));
+         status, int(mRunCount)));
 
     // XXX Bug 759805: Sometimes we will call this method directly from
     // HttpCacheQuery::Run when AsyncOpenCacheEntry fails, but
@@ -4357,9 +4357,6 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
 
     nsresult rv;
 
-    if (mCanceled)
-        return mStatus;
-
     rv = NS_CheckPortSafety(mURI);
     if (NS_FAILED(rv))
         return rv;
@@ -5054,9 +5051,9 @@ nsHttpChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
         //
         nsresult transportStatus;
         if (request == mCachePump)
-            transportStatus = nsITransport::STATUS_READING;
+            transportStatus = NS_NET_STATUS_READING;
         else
-            transportStatus = nsISocketTransport::STATUS_RECEIVING_FROM;
+            transportStatus = NS_NET_STATUS_RECEIVING_FROM;
 
         // mResponseHead may reference new or cached headers, but either way it
         // holds our best estimate of the total content length.  Even in the case
@@ -5108,8 +5105,8 @@ nsHttpChannel::OnTransportStatus(nsITransport *trans, nsresult status,
     if (!mProgressSink)
         GetCallback(mProgressSink);
 
-    if (status == nsISocketTransport::STATUS_CONNECTED_TO ||
-        status == nsISocketTransport::STATUS_WAITING_FOR) {
+    if (status == NS_NET_STATUS_CONNECTED_TO ||
+        status == NS_NET_STATUS_WAITING_FOR) {
         nsCOMPtr<nsISocketTransport> socketTransport =
             do_QueryInterface(trans);
         if (socketTransport) {
@@ -5865,7 +5862,7 @@ nsHttpChannel::DoInvalidateCacheEntry(const nsCString &key)
         GetCacheSessionNameForStoragePolicy(storagePolicy, mPrivateBrowsing);
 
     LOG(("DoInvalidateCacheEntry [channel=%p session=%s policy=%d key=%s]",
-         this, clientID, PRIntn(storagePolicy), key.get()));
+         this, clientID, int(storagePolicy), key.get()));
 
     nsresult rv;
     nsCOMPtr<nsICacheService> serv =
@@ -5884,7 +5881,7 @@ nsHttpChannel::DoInvalidateCacheEntry(const nsCString &key)
     }
 
     LOG(("DoInvalidateCacheEntry [channel=%p session=%s policy=%d key=%s rv=%d]",
-         this, clientID, PRIntn(storagePolicy), key.get(), PRIntn(rv)));
+         this, clientID, int(storagePolicy), key.get(), int(rv)));
 }
 
 nsCacheStoragePolicy

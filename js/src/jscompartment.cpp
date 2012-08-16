@@ -45,9 +45,9 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     gcStoreBuffer(&gcNursery),
 #endif
     needsBarrier_(false),
-    gcState(NoGCScheduled),
+    gcScheduled(false),
+    gcState(NoGC),
     gcPreserveCode(false),
-    gcStarted(false),
     gcBytes(0),
     gcTriggerBytes(0),
     gcHeapGrowthFactor(3.0),
@@ -67,7 +67,6 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     debugModeBits(rt->debugMode ? DebugFromC : 0),
     watchpointMap(NULL),
     scriptCountsMap(NULL),
-    sourceMapMap(NULL),
     debugScriptMap(NULL)
 {
     setGCMaxMallocBytes(rt->gcMaxMallocBytes);
@@ -77,7 +76,6 @@ JSCompartment::~JSCompartment()
 {
     Foreground::delete_(watchpointMap);
     Foreground::delete_(scriptCountsMap);
-    Foreground::delete_(sourceMapMap);
     Foreground::delete_(debugScriptMap);
 }
 
@@ -481,6 +479,8 @@ JSCompartment::discardJitCode(FreeOp *fop)
              */
             script->resetUseCount();
         }
+
+        types.sweepCompilerOutputs(fop);
     }
 
 #endif /* JS_METHODJIT */
@@ -573,10 +573,6 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         {
             gcstats::AutoPhase ap2(rt->gcStats, gcstats::PHASE_FREE_TI_ARENA);
             rt->freeLifoAlloc.transferFrom(&oldAlloc);
-            if (types.constrainedOutputs) {
-                fop->delete_(types.constrainedOutputs);
-                types.constrainedOutputs = NULL;
-            }
         }
     }
 

@@ -5,6 +5,8 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.util.GeckoEventListener;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -52,8 +54,8 @@ public class GeckoPreferences
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.preferences);
-        GeckoAppShell.registerGeckoEventListener("Preferences:Data", this);
-        GeckoAppShell.registerGeckoEventListener("Sanitize:Finished", this);
+        registerEventListener("Preferences:Data");
+        registerEventListener("Sanitize:Finished");
    }
 
    @Override
@@ -79,8 +81,8 @@ public class GeckoPreferences
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        GeckoAppShell.unregisterGeckoEventListener("Preferences:Data", this);
-        GeckoAppShell.unregisterGeckoEventListener("Sanitize:Finished", this);
+        unregisterEventListener("Preferences:Data");
+        unregisterEventListener("Sanitize:Finished");
     }
 
     public void handleMessage(String event, JSONObject message) {
@@ -395,5 +397,13 @@ public class GeckoPreferences
         } catch (JSONException e) {
             Log.e(LOGTAG, "JSON exception: ", e);
         }
+    }
+
+    private void registerEventListener(String event) {
+        GeckoAppShell.getEventDispatcher().registerEventListener(event, this);
+    }
+
+    private void unregisterEventListener(String event) {
+        GeckoAppShell.getEventDispatcher().unregisterEventListener(event, this);
     }
 }

@@ -30,7 +30,7 @@
 #include "FileStreamWrappers.h"
 #include "MemoryStreams.h"
 #include "MetadataHelper.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsContentUtils.h"
 
 #define STREAM_COPY_BLOCK_SIZE 32768
@@ -516,10 +516,9 @@ LockedFile::GetLocation(JSContext* aCx,
   if (mLocation == LL_MAXUINT) {
     *aLocation = JSVAL_NULL;
   }
-  else if (!JS_NewNumberValue(aCx, double(mLocation), aLocation)) {
-    return NS_ERROR_FAILURE;
+  else {
+    *aLocation = JS_NumberValue(double(mLocation));
   }
-
   return NS_OK;
 }
 
@@ -536,7 +535,7 @@ LockedFile::SetLocation(JSContext* aCx,
   }
 
   uint64_t location;
-  if (!xpc::ValueToUint64(aCx, aLocation, &location)) {
+  if (!JS::ToUint64(aCx, aLocation, &location)) {
     return NS_ERROR_TYPE_ERR;
   }
 

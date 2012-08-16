@@ -10,14 +10,14 @@ import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.GfxInfoThread;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 import org.mozilla.gecko.gfx.IntSize;
-import org.mozilla.gecko.gfx.LayerController;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.RectUtils;
 import org.mozilla.gecko.gfx.ScreenshotLayer;
 import org.mozilla.gecko.mozglue.DirectBufferAllocator;
+import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.FloatUtils;
-
-import org.json.JSONObject;
+import org.mozilla.gecko.util.GeckoBackgroundThread;
+import org.mozilla.gecko.util.GeckoEventListener;
 
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -96,11 +96,9 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Queue;
 import java.util.StringTokenizer;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.SynchronousQueue;
 
@@ -144,8 +142,7 @@ public class GeckoAppShell
     private static Boolean sNSSLibsLoaded = false;
     private static Boolean sLibsSetup = false;
     private static File sGREDir = null;
-    private static Map<String, CopyOnWriteArrayList<GeckoEventListener>> mEventListeners
-            = new HashMap<String, CopyOnWriteArrayList<GeckoEventListener>>();
+    private static final EventDispatcher sEventDispatcher = new EventDispatcher();
 
     /* Is the value in sVibrationEndTime valid? */
     private static boolean sVibrationMaybePlaying = false;
@@ -523,7 +520,7 @@ public class GeckoAppShell
         if (restoreMode != RESTORE_NONE)
             combinedArgs += " -restoremode " + restoreMode;
 
-        DisplayMetrics metrics = GeckoApp.mAppContext.getDisplayMetrics();
+        DisplayMetrics metrics = GeckoApp.mAppContext.getResources().getDisplayMetrics();
         combinedArgs += " -width " + metrics.widthPixels + " -height " + metrics.heightPixels;
 
         GeckoApp.mAppContext.runOnUiThread(new Runnable() {
@@ -538,10 +535,11 @@ public class GeckoAppShell
 
     // Called on the UI thread after Gecko loads.
     private static void geckoLoaded() {
-        final LayerController layerController = GeckoApp.mAppContext.getLayerController();
-        LayerView v = layerController.getView();
-        mInputConnection = v.setInputConnectionHandler();
-        layerController.notifyLayerClientOfGeometryChange();
+        final GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+        LayerView v = layerClient.getView();
+        mInputConnection = GeckoInputConnection.create(v);
+        v.setInputConnectionHandler(mInputConnection);
+        layerClient.setForceRedraw();
     }
 
     static void sendPendingEventsToGecko() {
@@ -792,6 +790,13 @@ public class GeckoAppShell
     static void scheduleRestart() {
         Log.i(LOGTAG, "scheduling restart");
         gRestartScheduled = true;
+    }
+
+    public static File installWebApp(String aTitle, String aURI, String aUniqueURI, String aIconURL) {
+        int index = WebAppAllocator.getInstance(GeckoApp.mAppContext).findAndAllocateIndex(aUniqueURI);
+        GeckoProfile profile = GeckoProfile.get(GeckoApp.mAppContext, "webapp" + index);
+        createShortcut(aTitle, aURI, aUniqueURI, aIconURL, "webapp");
+        return profile.getDir();
     }
 
     public static Intent getWebAppIntent(String aURI, String aUniqueURI, boolean forInstall) {
@@ -1394,7 +1399,7 @@ public class GeckoAppShell
 
     public static int getDpi() {
         if (sDensityDpi == 0) {
-            sDensityDpi = GeckoApp.mAppContext.getDisplayMetrics().densityDpi;
+            sDensityDpi = GeckoApp.mAppContext.getResources().getDisplayMetrics().densityDpi;
         }
 
         return sDensityDpi;
@@ -1416,8 +1421,8 @@ public class GeckoAppShell
         // Don't perform haptic feedback if a vibration is currently playing,
         // because the haptic feedback will nuke the vibration.
         if (!sVibrationMaybePlaying || System.nanoTime() >= sVibrationEndTime) {
-            LayerController layerController = GeckoApp.mAppContext.getLayerController();
-            LayerView layerView = layerController.getView();
+            GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+            LayerView layerView = layerClient.getView();
             layerView.performHapticFeedback(aIsLongPress ?
                                             HapticFeedbackConstants.LONG_PRESS :
                                             HapticFeedbackConstants.VIRTUAL_KEY);
@@ -1425,8 +1430,8 @@ public class GeckoAppShell
     }
 
     private static Vibrator vibrator() {
-        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-        LayerView layerView = layerController.getView();
+        GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+        LayerView layerView = layerClient.getView();
 
         return (Vibrator) layerView.getContext().getSystemService(Context.VIBRATOR_SERVICE);
     }
@@ -1474,7 +1479,7 @@ public class GeckoAppShell
     public static void notifyDefaultPrevented(final boolean defaultPrevented) {
         getMainHandler().post(new Runnable() {
             public void run() {
-                LayerView view = GeckoApp.mAppContext.getLayerController().getView();
+                LayerView view = GeckoApp.mAppContext.getLayerClient().getView();
                 view.getTouchEventHandler().handleEventListenerAction(!defaultPrevented);
             }
         });
@@ -1910,18 +1915,12 @@ public class GeckoAppShell
      *
      * This method is referenced by Robocop via reflection.
      */
-    public static void registerGeckoEventListener(String event, GeckoEventListener listener) {
-        synchronized (mEventListeners) {
-            CopyOnWriteArrayList<GeckoEventListener> listeners = mEventListeners.get(event);
-            if (listeners == null) {
-                // create a CopyOnWriteArrayList so that we can modify it
-                // concurrently with iterating through it in handleGeckoMessage.
-                // Otherwise we could end up throwing a ConcurrentModificationException.
-                listeners = new CopyOnWriteArrayList<GeckoEventListener>();
-            }
-            listeners.add(listener);
-            mEventListeners.put(event, listeners);
-        }
+    public static void registerEventListener(String event, GeckoEventListener listener) {
+        sEventDispatcher.registerEventListener(event, listener);
+    }
+
+    static EventDispatcher getEventDispatcher() {
+        return sEventDispatcher;
     }
 
     static SynchronousQueue<Date> sTracerQueue = new SynchronousQueue<Date>();
@@ -1951,17 +1950,8 @@ public class GeckoAppShell
      *
      * This method is referenced by Robocop via reflection.
      */
-    public static void unregisterGeckoEventListener(String event, GeckoEventListener listener) {
-        synchronized (mEventListeners) {
-            CopyOnWriteArrayList<GeckoEventListener> listeners = mEventListeners.get(event);
-            if (listeners == null) {
-                return;
-            }
-            listeners.remove(listener);
-            if (listeners.size() == 0) {
-                mEventListeners.remove(event);
-            }
-        }
+    public static void unregisterEventListener(String event, GeckoEventListener listener) {
+        sEventDispatcher.unregisterEventListener(event, listener);
     }
 
     /*
@@ -1972,45 +1962,7 @@ public class GeckoAppShell
     }
 
     public static String handleGeckoMessage(String message) {
-        //        
-        //        {"gecko": {
-        //                "type": "value",
-        //                "event_specific": "value",
-        //                ....
-        try {
-            JSONObject json = new JSONObject(message);
-            final JSONObject geckoObject = json.getJSONObject("gecko");
-            String type = geckoObject.getString("type");
-            
-            CopyOnWriteArrayList<GeckoEventListener> listeners;
-            synchronized (mEventListeners) {
-                listeners = mEventListeners.get(type);
-            }
-
-            if (listeners == null)
-                return "";
-
-            String response = null;
-
-            for (GeckoEventListener listener : listeners) {
-                listener.handleMessage(type, geckoObject);
-                if (listener instanceof GeckoEventResponder) {
-                    String newResponse = ((GeckoEventResponder)listener).getResponse();
-                    if (response != null && newResponse != null) {
-                        Log.e(LOGTAG, "Received two responses for message of type " + type);
-                    }
-                    response = newResponse;
-                }
-            }
-
-            if (response != null)
-                return response;
-
-        } catch (Exception e) {
-            Log.e(LOGTAG, "handleGeckoMessage throws " + e, e);
-        }
-
-        return "";
+        return sEventDispatcher.dispatchEvent(message);
     }
 
     public static void disableBatteryNotifications() {
@@ -2392,11 +2344,11 @@ class ScreenshotHandler implements Runnable {
     }
 
     private void screenshotWholePage(int tabId) {
-        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-        if (layerController == null) {
+        GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+        if (layerClient == null) {
             return;
         }
-        ImmutableViewportMetrics viewport = layerController.getViewportMetrics();
+        ImmutableViewportMetrics viewport = layerClient.getViewportMetrics();
         RectF pageRect = viewport.getCssPageRect();
 
         if (FloatUtils.fuzzyEquals(pageRect.width(), 0) || FloatUtils.fuzzyEquals(pageRect.height(), 0)) {
@@ -2496,14 +2448,14 @@ class ScreenshotHandler implements Runnable {
             return;
         }
 
-        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-        if (layerController == null) {
+        GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+        if (layerClient == null) {
             // we could be in the midst of an activity tear-down and re-start, so guard
             // against a null layer controller.
             return;
         }
 
-        ImmutableViewportMetrics viewport = layerController.getViewportMetrics();
+        ImmutableViewportMetrics viewport = layerClient.getViewportMetrics();
         if (RectUtils.fuzzyEquals(mPageRect, viewport.getCssPageRect())) {
             // the page size hasn't changed, so our dirty rect is still valid and we can just
             // repaint that area
@@ -2583,9 +2535,9 @@ class ScreenshotHandler implements Runnable {
                                 // this screenshot has all its slices done, so push it out
                                 // to the layer renderer and remove it from the list
                             }
-                            LayerController layerController = GeckoApp.mAppContext.getLayerController();
-                            if (layerController != null) {
-                                layerController.getView().getRenderer().setCheckerboardBitmap(
+                            GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+                            if (layerClient != null) {
+                                layerClient.getView().getRenderer().setCheckerboardBitmap(
                                     data, bufferWidth, bufferHeight, handler.mPageRect,
                                     current.getPaintedRegion());
                             }

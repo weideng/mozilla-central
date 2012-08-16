@@ -60,7 +60,7 @@
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
 #include "nsEventStates.h"
-#include "nsLayoutErrors.h"
+#include "nsError.h"
 #include "nsBidiUtils.h"
 #include "nsBidiPresUtils.h"
 
@@ -1290,7 +1290,6 @@ nsDisplayImage::ConfigureLayer(ImageLayer *aLayer)
   transform.Scale(destRect.Width()/imageWidth,
                   destRect.Height()/imageHeight);
   aLayer->SetBaseTransform(gfx3DMatrix::From2D(transform));
-
   aLayer->SetVisibleRegion(nsIntRect(0, 0, imageWidth, imageHeight));
 }
 
@@ -1744,10 +1743,10 @@ nsImageFrame::List(FILE* out, PRInt32 aIndent) const
 }
 #endif
 
-PRIntn
+int
 nsImageFrame::GetSkipSides() const
 {
-  PRIntn skip = 0;
+  int skip = 0;
   if (nullptr != GetPrevInFlow()) {
     skip |= 1 << NS_SIDE_TOP;
   }

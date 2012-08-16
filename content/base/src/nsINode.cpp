@@ -30,7 +30,7 @@
 #include "nsDOMAttributeMap.h"
 #include "nsDOMCID.h"
 #include "nsDOMCSSAttrDeclaration.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsDOMMutationObserver.h"
 #include "nsDOMString.h"
 #include "nsDOMTokenList.h"
@@ -437,10 +437,11 @@ nsINode::RemoveChild(nsINode *aOldChild)
   }
 
   if (IsNodeOfType(eDATA_NODE)) {
-    return NS_ERROR_DOM_HIERARCHY_REQUEST_ERR;
+    // aOldChild can't be one of our children.
+    return NS_ERROR_DOM_NOT_FOUND_ERR;
   }
 
-  if (aOldChild && aOldChild->GetNodeParent() == this) {
+  if (aOldChild->GetNodeParent() == this) {
     nsContentUtils::MaybeFireNodeRemoved(aOldChild, this, OwnerDoc());
   }
 

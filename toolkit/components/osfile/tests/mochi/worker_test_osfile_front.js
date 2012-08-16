@@ -15,10 +15,12 @@ self.onmessage = function onmessage_start(msg) {
   };
   try {
     test_init();
+    test_unicode();
     test_open_existing_file();
     test_open_non_existing_file();
     test_copy_existing_file();
     test_read_write_file();
+    test_position();
     test_move_file();
     test_iter_dir();
     test_info();
@@ -50,6 +52,29 @@ function test_init() {
   importScripts("resource:///modules/osfile.jsm");
 }
 
+
+function test_unicode() {
+  ok(true, "Starting test_unicode");
+  function test_go_round(encoding, sentence)  {
+    let bytes = new OS.Shared.Type.uint32_t.implementation();
+    let pBytes = bytes.address();
+    ok(true, "test_unicode: testing encoding of " + sentence + " with encoding " + encoding);
+    let encoded = OS.Shared.Utils.Strings.encodeAll(encoding, sentence, pBytes);
+    let decoded = OS.Shared.Utils.Strings.decodeAll(encoding, encoded, bytes);
+    isnot(decoded, null, "test_unicode: Decoding returned a string");
+    is(decoded.length, sentence.length, "test_unicode: Decoding + encoding returns strings with the same length");
+    is(decoded, sentence, "test_unicode: Decoding + encoding returns the same string");
+  }
+  let tests = ["This is a simple test","àáâäèéêëíìîïòóôöùúûüçß","骥䥚ぶ 䤦べ祌褦鋨 きょげヒャ蟥誨 もゴ 栩を愦 堦馺ぢょ䰯蟤 禺つみゃ期楥 勩谨障り䶥 蟤れ, 訦き モじゃむ㧦ゔ 勩谨障り䶥 堥駪グェ 竨ぢゅ嶥鏧䧦 捨ヴョに䋯ざ 䦧樚 焯じゅ妦 っ勯杯 堦馺ぢょ䰯蟤 滩シャ饥鎌䧺 珦ひゃ, ざやぎ えゐ へ簯ホゥ馯夦 槎褤せ檨壌","Νισλ αλικυιδ περτινασια ναμ ετ, νε ιρασυνδια νεγλεγενθυρ ηας, νο νυμκυαμ εφφισιενδι φις. Εως μινιμυμ ελειφενδ ατ, κυωτ μαλυισετ φυλπυτατε συμ ιδ."];
+  let encodings = ["utf-8", "utf-16"];
+  for each (let encoding in encodings) {
+    for each (let i in tests) {
+      test_go_round(encoding, i);
+    }
+    test_go_round(encoding, tests.join());
+  }
+  ok(true, "test_unicode: complete");
+}
 
 /**
  * Test that we can open an existing file.
@@ -192,8 +217,17 @@ function test_move_file()
 
   ok(true, "test_move_file: Move complete");
 
-  // 3. Check
+  // 3. Check that destination exists
   compare_files("test_move_file", src_file_name, tmp2_file_name);
+
+  // 4. Check that original file does not exist anymore
+  let exn;
+  try {
+    OS.File.open(tmp_file_name);
+  } catch (x) {
+    exn = x;
+  }
+  ok(!!exn, "test_move_file: Original file has been removed");
 
   ok(true, "test_move_file: Cleaning up");
   OS.File.remove(tmp2_file_name);
@@ -259,6 +293,35 @@ function test_iter_dir()
   ok(true, "test_iter_dir: Cleaning up");
   iterator.close();
   ok(true, "test_iter_dir: Complete");
+}
+
+function test_position() {
+  ok(true, "test_position: Starting");
+
+  ok("POS_START" in OS.File, "test_position: POS_START exists");
+  ok("POS_CURRENT" in OS.File, "test_position: POS_CURRENT exists");
+  ok("POS_END" in OS.File, "test_position: POS_END exists");
+
+  let ARBITRARY_POSITION = 321;
+  let src_file_name = "chrome/toolkit/components/osfile/tests/mochi/worker_test_osfile_unix.js";
+
+
+  let file = OS.File.open(src_file_name);
+  is(file.getPosition(), 0, "test_position: Initial position is 0");
+
+  let size = 0 + file.stat().size; // Hack: We can remove this 0 + once 776259 has landed
+
+  file.setPosition(ARBITRARY_POSITION, OS.File.POS_START);
+  is(file.getPosition(), ARBITRARY_POSITION, "test_position: Setting position from start");
+
+  file.setPosition(-ARBITRARY_POSITION, OS.File.POS_END);
+  is(file.getPosition(), size - ARBITRARY_POSITION, "test_position: Setting position from end");
+
+  file.setPosition(ARBITRARY_POSITION, OS.File.POS_CURRENT);
+  is(file.getPosition(), size, "test_position: Setting position from current");
+
+  file.close();
+  ok(true, "test_position: Complete");
 }
 
 function test_info() {

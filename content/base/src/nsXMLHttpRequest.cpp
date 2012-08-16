@@ -51,10 +51,9 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
-#include "nsContentErrors.h"
+#include "nsError.h"
 #include "nsLayoutStatics.h"
 #include "nsCrossSiteListenerProxy.h"
-#include "nsDOMError.h"
 #include "nsIHTMLDocument.h"
 #include "nsIMultiPartChannel.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -480,7 +479,7 @@ nsXMLHttpRequest::~nsXMLHttpRequest()
 }
 
 void
-nsXMLHttpRequest::RootResultArrayBuffer()
+nsXMLHttpRequest::RootJSResultObjects()
 {
   nsContentUtils::PreserveWrapper(
     static_cast<nsIDOMEventTarget*>(
@@ -977,6 +976,8 @@ nsXMLHttpRequest::CreateResponseParsedJSON(JSContext* aCx)
   if (!aCx) {
     return NS_ERROR_FAILURE;
   }
+  RootJSResultObjects();
+
   // The Unicode converter has already zapped the BOM if there was one
   if (!JS_ParseJSON(aCx,
                     static_cast<const jschar*>(mResponseText.get()),
@@ -1198,7 +1199,7 @@ nsXMLHttpRequest::GetResponse(JSContext* aCx, ErrorResult& aRv)
     }
 
     if (!mResultArrayBuffer) {
-      RootResultArrayBuffer();
+      RootJSResultObjects();
       aRv = nsContentUtils::CreateArrayBuffer(aCx, mResponseBody,
                                               &mResultArrayBuffer);
       if (aRv.Failed()) {
@@ -2960,7 +2961,7 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
       }
 
       mUploadComplete = false;
-      PRUint32 uploadTotal = 0;
+      PRUint64 uploadTotal = 0;
       postDataStream->Available(&uploadTotal);
       mUploadTotal = uploadTotal;
 
@@ -3173,15 +3174,21 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
 }
 
 /* void setRequestHeader (in AUTF8String header, in AUTF8String value); */
+// http://dvcs.w3.org/hg/xhr/raw-file/tip/Overview.html#dom-xmlhttprequest-setrequestheader
 NS_IMETHODIMP
 nsXMLHttpRequest::SetRequestHeader(const nsACString& header,
                                    const nsACString& value)
 {
-  nsresult rv;
+  // Step 1 and 2
+  if (!(mState & XML_HTTP_REQUEST_OPENED)) {
+    return NS_ERROR_DOM_INVALID_STATE_ERR;
+  }
+  NS_ASSERTION(mChannel, "mChannel must be valid if we're OPENED.");
 
+  // Step 3
   // Make sure we don't store an invalid header name in mCORSUnsafeHeaders
-  if (!IsValidHTTPToken(header)) {
-    return NS_ERROR_FAILURE;
+  if (!IsValidHTTPToken(header)) { // XXX nsHttp::IsValidToken?
+    return NS_ERROR_DOM_SYNTAX_ERR;
   }
 
   // Check that we haven't already opened the channel. We can't rely on
@@ -3189,7 +3196,7 @@ nsXMLHttpRequest::SetRequestHeader(const nsACString& header,
   // still be waiting for mCORSPreflightChannel to actually open mChannel
   if (mCORSPreflightChannel) {
     bool pending;
-    rv = mCORSPreflightChannel->IsPending(&pending);
+    nsresult rv = mCORSPreflightChannel->IsPending(&pending);
     NS_ENSURE_SUCCESS(rv, rv);
     
     if (pending) {
@@ -3197,13 +3204,10 @@ nsXMLHttpRequest::SetRequestHeader(const nsACString& header,
     }
   }
 
-  if (!(mState & XML_HTTP_REQUEST_OPENED))
-    return NS_ERROR_IN_PROGRESS;
-
   if (!mChannel)             // open() initializes mChannel, and open()
     return NS_ERROR_FAILURE; // must be called before first setRequestHeader()
 
-  nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(mChannel));
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(mChannel);
   if (!httpChannel) {
     return NS_OK;
   }
@@ -3212,12 +3216,11 @@ nsXMLHttpRequest::SetRequestHeader(const nsACString& header,
   // the executing script has UniversalXPConnect.
 
   bool privileged;
-  rv = IsCapabilityEnabled("UniversalXPConnect", &privileged);
-  if (NS_FAILED(rv))
+  if (NS_FAILED(IsCapabilityEnabled("UniversalXPConnect", &privileged)))
     return NS_ERROR_FAILURE;
 
   if (!privileged) {
-    // Check for dangerous headers
+    // Step 5: Check for dangerous headers.
     const char *kInvalidHeaders[] = {
       "accept-charset", "accept-encoding", "access-control-request-headers",
       "access-control-request-method", "connection", "content-length",
@@ -3262,7 +3265,10 @@ nsXMLHttpRequest::SetRequestHeader(const nsACString& header,
   }
 
   // We need to set, not add to, the header.
-  rv = httpChannel->SetRequestHeader(header, value, false);
+  nsresult rv = httpChannel->SetRequestHeader(header, value, false);
+  if (rv == NS_ERROR_INVALID_ARG) {
+    return NS_ERROR_DOM_SYNTAX_ERR;
+  }
   if (NS_SUCCEEDED(rv)) {
     // We'll want to duplicate this header for any replacement channels (eg. on redirect)
     RequestHeader reqHeader = {
@@ -3270,7 +3276,6 @@ nsXMLHttpRequest::SetRequestHeader(const nsACString& header,
     };
     mModifiedRequestHeaders.AppendElement(reqHeader);
   }
-
   return rv;
 }
 
@@ -3693,7 +3698,6 @@ nsXMLHttpRequest::MaybeDispatchProgressEvents(bool aFinalProgress)
     if (aFinalProgress) {
       mUploadTotal = mUploadTransferred;
       mUploadProgressMax = mUploadProgress;
-      mUploadLengthComputable = true;
     }
     if (mUpload && !mUploadComplete) {
       DispatchProgressEvent(mUpload, NS_LITERAL_STRING(PROGRESS_STR),
@@ -3704,7 +3708,6 @@ nsXMLHttpRequest::MaybeDispatchProgressEvents(bool aFinalProgress)
   } else {
     if (aFinalProgress) {
       mLoadTotal = mLoadTransferred;
-      mLoadLengthComputable = true;
     }
     mInLoadProgressEvent = true;
     DispatchProgressEvent(this, NS_LITERAL_STRING(PROGRESS_STR),
@@ -4009,7 +4012,6 @@ DOMCI_DATA(XMLHttpProgressEvent, nsXMLHttpProgressEvent)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsXMLHttpProgressEvent)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMProgressEvent)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsIDOMEvent, nsIDOMProgressEvent)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMNSEvent)
   NS_INTERFACE_MAP_ENTRY(nsIDOMProgressEvent)
   NS_INTERFACE_MAP_ENTRY(nsIDOMLSProgressEvent)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(XMLHttpProgressEvent)

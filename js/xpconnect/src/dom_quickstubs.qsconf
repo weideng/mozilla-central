@@ -176,8 +176,6 @@ members = [
     'nsIDOMProgressEvent.loaded',
     'nsIDOMProgressEvent.total',
     #XXX Can't quickstub initProgressEvent because it has long long parameters.
-    'nsIDOMNSEvent.originalTarget',
-    'nsIDOMNSEvent.getPreventDefault',
     'nsIDOMUIEvent.which',
     'nsIDOMUIEvent.rangeParent',
     'nsIDOMUIEvent.rangeOffset',
@@ -186,6 +184,7 @@ members = [
     'nsIDOMUIEvent.isChar',
 
     'nsIDOMTouch.*',
+    'nsIDOMTouchList.*',
     'nsIDOMTouchEvent.*',
 
     # dom/interfaces/geolocation - None.
@@ -502,6 +501,7 @@ irregularFilenames = {
     'nsIWebGLExtensionTextureFilterAnisotropic' : 'nsIDOMWebGLRenderingContext',
     'nsIWebGLExtensionLoseContext' : 'nsIDOMWebGLRenderingContext',
     'nsIWebGLExtensionCompressedTextureS3TC' : 'nsIDOMWebGLRenderingContext',
+    'nsIWebGLExtensionDepthTexture' : 'nsIDOMWebGLRenderingContext',
 
     'nsIIndexedDatabaseUsageCallback': 'nsIIndexedDatabaseManager',
 

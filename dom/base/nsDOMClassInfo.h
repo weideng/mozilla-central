@@ -157,7 +157,6 @@ protected:
   }
 
   static nsresult Init();
-  static nsresult RegisterClassName(PRInt32 aDOMClassInfoID);
   static nsresult RegisterClassProtos(PRInt32 aDOMClassInfoID);
   static nsresult RegisterExternalClasses();
   nsresult ResolveConstructor(JSContext *cx, JSObject *obj,
@@ -1213,6 +1212,27 @@ public:
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsCSSRuleListSH(aData);
+  }
+};
+
+class nsDOMTouchListSH : public nsArraySH
+{
+  protected:
+  nsDOMTouchListSH(nsDOMClassInfoData* aData) : nsArraySH(aData)
+  {
+  }
+
+  virtual ~nsDOMTouchListSH()
+  {
+  }
+
+  virtual nsISupports* GetItemAt(nsISupports *aNative, PRUint32 aIndex,
+                                 nsWrapperCache **aCache, nsresult *aResult);
+
+  public:
+  static nsIClassInfo* doCreate(nsDOMClassInfoData* aData)
+  {
+    return new nsDOMTouchListSH(aData);
   }
 };
 

@@ -38,9 +38,8 @@ interface nsIDOMFile;
 interface nsIFile;
 interface nsIDOMTouch;
 interface nsIDOMClientRect;
-interface mozIDOMApplication;
 
-[scriptable, uuid(b276a71e-21ee-4be6-894d-4039523e1ad8)]
+[scriptable, uuid(f7222baa-7c4b-4079-a9e0-db13cf797f58)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -216,6 +215,9 @@ interface nsIDOMWindowUtils : nsISupports {
    * @param aModifiers modifiers pressed, using constants defined as MODIFIER_*
    * @param aIgnoreRootScrollFrame whether the event should ignore viewport bounds
    *                           during dispatch
+   * @param aPressure touch input pressure: 0.0 -> 1.0
+   * @param aInputSourceArg input source, see nsIDOMMouseEvent for values,
+   *        defaults to mouse input.
    */
   void sendMouseEvent(in AString aType,
                       in float aX,
@@ -223,7 +225,9 @@ interface nsIDOMWindowUtils : nsISupports {
                       in long aButton,
                       in long aClickCount,
                       in long aModifiers,
-                      [optional] in boolean aIgnoreRootScrollFrame);
+                      [optional] in boolean aIgnoreRootScrollFrame,
+                      [optional] in float aPressure,
+                      [optional] in unsigned short aInputSourceArg);
 
   /** Synthesize a touch event. The event types supported are:
    *    touchstart, touchend, touchmove, and touchcancel
@@ -273,12 +277,12 @@ interface nsIDOMWindowUtils : nsISupports {
                               in long aButton,
                               in long aClickCount,
                               in long aModifiers,
-                              [optional] in boolean aIgnoreRootScrollFrame);
+                              [optional] in boolean aIgnoreRootScrollFrame,
+                              [optional] in float aPressure,
+                              [optional] in unsigned short aInputSourceArg);
 
-  /** Synthesize a mouse scroll event for a window. The event types supported
-   *  are: 
-   *    DOMMouseScroll
-   *    MozMousePixelScroll
+  /** Synthesize a wheel event for a window. The event types supported is only
+   *  wheel.
    *
    * Events are sent in coordinates offset by aX and aY from the window.
    *
@@ -286,22 +290,38 @@ interface nsIDOMWindowUtils : nsISupports {
    * Will throw a DOM security error if called without UniversalXPConnect
    * privileges.
    *
-   * @param aType event type
-   * @param aX x offset in CSS pixels
-   * @param aY y offset in CSS pixels
-   * @param aButton button to synthesize
-   * @param aScrollFlags flag bits --- see nsMouseScrollFlags in nsGUIEvent.h
-   * @param aDelta the direction and amount to scroll (in lines or pixels,
-   * depending on the event type)
-   * @param aModifiers modifiers pressed, using constants defined as MODIFIER_*
+   * @param aX                 x offset in CSS pixels
+   * @param aY                 y offset in CSS pixels
+   * @param aDeltaX            deltaX value.
+   * @param aDeltaY            deltaY value.
+   * @param aDeltaZ            deltaZ value.
+   * @param aDeltaMode         deltaMode value which must be one of
+   *                           nsIDOMWheelEvent::DOM_DELTA_*.
+   * @param aModifiers         modifiers pressed, using constants defined as
+   *                           MODIFIER_*
+   * @param aLineOrPageDeltaX  If you set this value non-zero for
+   *                           DOM_DELTA_PIXEL event, nsEventStateManager will
+   *                           dispatch NS_MOUSE_SCROLL event for horizontal
+   *                           scroll.
+   * @param aLineOrPageDeltaY  If you set this value non-zero for
+   *                           DOM_DELTA_PIXEL event, nsEventStateManager will
+   *                           dispatch NS_MOUSE_SCROLL event for vertical
+   *                           scroll.
+   * @param aOptions           Set following flags.
    */
-  void sendMouseScrollEvent(in AString aType,
-                            in float aX,
-                            in float aY,
-                            in long aButton,
-                            in long aScrollFlags,
-                            in long aDelta,
-                            in long aModifiers);
+   const unsigned long WHEEL_EVENT_CAUSED_BY_PIXEL_ONLY_DEVICE = 0x0001;
+   const unsigned long WHEEL_EVENT_CAUSED_BY_MOMENTUM          = 0x0002;
+   const unsigned long WHEEL_EVENT_CUSTOMIZED_BY_USER_PREFS    = 0x0004;
+   void sendWheelEvent(in float aX,
+                       in float aY,
+                       in double aDeltaX,
+                       in double aDeltaY,
+                       in double aDeltaZ,
+                       in unsigned long aDeltaMode,
+                       in long aModifiers,
+                       in long aLineOrPageDeltaX,
+                       in long aLineOrPageDeltaY,
+                       in unsigned long aOptions);
 
   /**
    * Synthesize a key event to the window. The event types supported are:
@@ -752,7 +772,7 @@ interface nsIDOMWindowUtils : nsISupports {
   /**
    * Synthesize a query content event.
    *
-   * @param aType  On of the following const values.  And see also each comment
+   * @param aType  One of the following const values.  And see also each comment
    *               for the other parameters and the result.
    */
   nsIQueryContentEventResult sendQueryContentEvent(in unsigned long aType,
@@ -760,29 +780,6 @@ interface nsIDOMWindowUtils : nsISupports {
                                                    in unsigned long aLength,
                                                    in long aX,
                                                    in long aY);
-
-
-  /**
-   * Called when the remote child frame has changed its fullscreen state,
-   * when entering fullscreen, and when the origin which is fullscreen changes.
-   * aFrameElement is the iframe element which contains the child-process
-   * fullscreen document, and aNewOrigin is the origin of the new fullscreen
-   * document.
-   */
-  void remoteFrameFullscreenChanged(in nsIDOMElement aFrameElement,
-                                    in AString aNewOrigin);
-
-  /**
-   * Called when the remote frame has popped all fullscreen elements off its
-   * stack, so that the operation can complete on the parent side.
-   */
-  void remoteFrameFullscreenReverted();
-
-  /**
-   * Called when the child frame has fully exit fullscreen, so that the parent
-   * process can also fully exit.
-   */
-  void exitFullscreen();
 
   // NOTE: following values are same as NS_QUERY_* in nsGUIEvent.h
 
@@ -871,6 +868,28 @@ interface nsIDOMWindowUtils : nsISupports {
    *         result are available.
    */
   const unsigned long QUERY_CHARACTER_AT_POINT                  = 3208;
+
+  /**
+   * Called when the remote child frame has changed its fullscreen state,
+   * when entering fullscreen, and when the origin which is fullscreen changes.
+   * aFrameElement is the iframe element which contains the child-process
+   * fullscreen document, and aNewOrigin is the origin of the new fullscreen
+   * document.
+   */
+  void remoteFrameFullscreenChanged(in nsIDOMElement aFrameElement,
+                                    in AString aNewOrigin);
+
+  /**
+   * Called when the remote frame has popped all fullscreen elements off its
+   * stack, so that the operation can complete on the parent side.
+   */
+  void remoteFrameFullscreenReverted();
+
+  /**
+   * Called when the child frame has fully exit fullscreen, so that the parent
+   * process can also fully exit.
+   */
+  void exitFullscreen();
 
   /**
    * Synthesize a selection set event to the window.
@@ -1173,25 +1192,8 @@ interface nsIDOMWindowUtils : nsISupports {
   void setScrollPositionClampingScrollPortSize(in float aWidth, in float aHeight);
 
   /**
-   * Mark if the window is an application window or not.
-   * This should only be set for top-level mozApp or mozBrowser frames.
-   * It should not be set for other frames unless you want a frame (and its
-   * children) to have a different value for IsPartOfApp than the frame's
-   * parent.
+   * Prevent this window (and any child windows) from displaying any further
+   * dialogs (e.g. window.alert()).
    */
-  void setIsApp(in boolean value);
-
-  /**
-   * Associate the window with an application by passing the URL of the
-   * application's manifest.
-   *
-   * This method will throw an exception if the manifest URL isn't a valid URL
-   * or isn't the manifest URL of an installed application.
-   */
-  void setApp(in DOMString manifestURL);
-  /**
-    * Retrieves the Application object associated to this window.
-    * Can be null if |setApp()| has not been called.
-    */
-  mozIDOMApplication getApp();
+  void preventFurtherDialogs();
 };

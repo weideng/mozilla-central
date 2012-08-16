@@ -33,6 +33,7 @@
 #include "nsDOMEventTargetHelper.h"
 #include "mozilla/Attributes.h"
 #include "nsDOMClassInfoID.h"
+#include "nsError.h"
 
 using namespace mozilla;
 

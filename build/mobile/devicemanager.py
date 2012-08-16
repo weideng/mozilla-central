@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import time
 import hashlib
 import socket
 import os
@@ -437,6 +436,8 @@ class DeviceManager:
     os - name of the os
     id - unique id of the device
     uptime - uptime of the device
+    uptimemillis - uptime of the device in milliseconds (NOT supported on all
+                   implementations)
     systime - system time of the device
     screen - screen resolution
     memory - memory stats

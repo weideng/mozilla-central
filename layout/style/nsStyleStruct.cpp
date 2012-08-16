@@ -1038,13 +1038,15 @@ nsChangeHint nsStyleSVGReset::CalcDifference(const nsStyleSVGReset& aOther) cons
     NS_UpdateHint(hint, nsChangeHint_UpdateEffects);
     NS_UpdateHint(hint, nsChangeHint_ReflowFrame);
     NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
-  } else if (mStopColor        != aOther.mStopColor     ||
-             mFloodColor       != aOther.mFloodColor    ||
-             mLightingColor    != aOther.mLightingColor ||
-             mStopOpacity      != aOther.mStopOpacity   ||
-             mFloodOpacity     != aOther.mFloodOpacity  ||
-             mDominantBaseline != aOther.mDominantBaseline ||
-             mVectorEffect     != aOther.mVectorEffect)
+  } else if (mDominantBaseline != aOther.mDominantBaseline) {
+    NS_UpdateHint(hint, nsChangeHint_NeedReflow);
+    NS_UpdateHint(hint, nsChangeHint_NeedDirtyReflow);
+  } else if (mStopColor     != aOther.mStopColor     ||
+             mFloodColor    != aOther.mFloodColor    ||
+             mLightingColor != aOther.mLightingColor ||
+             mStopOpacity   != aOther.mStopOpacity   ||
+             mFloodOpacity  != aOther.mFloodOpacity  ||
+             mVectorEffect  != aOther.mVectorEffect)
     NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
 
   return hint;
@@ -2274,7 +2276,12 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
    * or remove the view object, and also to handle abs-pos and fixed-pos containers.
    */
   if (HasTransform() != aOther.HasTransform()) {
-    NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
+    // We do not need to apply nsChangeHint_UpdateTransformLayer since
+    // nsChangeHint_RepaintFrame will forcibly invalidate the frame area and
+    // ensure layers are rebuilt (or removed).
+    NS_UpdateHint(hint, NS_CombineHint(nsChangeHint_AddOrRemoveTransform,
+                          NS_CombineHint(nsChangeHint_UpdateOverflow,
+                                         nsChangeHint_RepaintFrame)));
   }
   else if (HasTransform()) {
     /* Otherwise, if we've kept the property lying around and we already had a
@@ -2337,7 +2344,8 @@ nsChangeHint nsStyleDisplay::MaxDifference()
   return nsChangeHint(NS_STYLE_HINT_FRAMECHANGE |
                       nsChangeHint_UpdateOpacityLayer |
                       nsChangeHint_UpdateTransformLayer |
-                      nsChangeHint_UpdateOverflow);
+                      nsChangeHint_UpdateOverflow |
+                      nsChangeHint_AddOrRemoveTransform);
 }
 #endif
 

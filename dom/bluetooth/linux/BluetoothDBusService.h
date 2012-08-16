@@ -44,6 +44,18 @@ public:
   GetDevicePath(const nsAString& aAdapterPath,
                 const nsAString& aDeviceAddress,
                 nsAString& aDevicePath);
+  virtual int
+  GetDeviceServiceChannelInternal(const nsAString& aObjectPath,
+                                  const nsAString& aPattern,
+                                  int aAttributeId);
+
+  virtual nsTArray<PRUint32>
+  AddReservedServicesInternal(const nsAString& aAdapterPath,
+                              const nsTArray<PRUint32>& aServices);
+
+  virtual bool
+  RemoveReservedServicesInternal(const nsAString& aAdapterPath,
+                                 const nsTArray<PRUint32>& aServiceHandles);
 
 private:
   nsresult SendGetPropertyMessage(const nsAString& aPath,

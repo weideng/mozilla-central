@@ -52,8 +52,11 @@ HISTOGRAM(FORGET_SKIPPABLE_MAX, 1, 10000, 50, EXPONENTIAL, "Max time spent on on
 HISTOGRAM_ENUMERATED_VALUES(GC_REASON_2, js::gcreason::NUM_TELEMETRY_REASONS, "Reason (enum value) for initiating a GC")
 HISTOGRAM_BOOLEAN(GC_IS_COMPARTMENTAL, "Is it a compartmental GC?")
 HISTOGRAM(GC_MS, 1, 10000, 50, EXPONENTIAL, "Time spent running JS GC (ms)")
+HISTOGRAM(GC_MAX_PAUSE_MS, 1, 1000, 50, LINEAR, "Longest GC slice in a GC (ms)")
 HISTOGRAM(GC_MARK_MS, 1, 10000, 50, EXPONENTIAL, "Time spent running JS GC mark phase (ms)")
 HISTOGRAM(GC_SWEEP_MS, 1, 10000, 50, EXPONENTIAL, "Time spent running JS GC sweep phase (ms)")
+HISTOGRAM(GC_MARK_ROOTS_MS, 1, 200, 50, LINEAR, "Time spent marking GC roots (ms)")
+HISTOGRAM(GC_MARK_GRAY_MS, 1, 200, 50, LINEAR, "Time spent marking gray GC objects (ms)")
 HISTOGRAM(GC_SLICE_MS, 1, 10000, 50, EXPONENTIAL, "Time spent running a JS GC slice (ms)")
 HISTOGRAM(GC_MMU_50, 1, 100, 20, LINEAR, "Minimum percentage of time spent outside GC over any 50ms window")
 HISTOGRAM_BOOLEAN(GC_RESET, "Was an incremental GC canceled?")
@@ -208,6 +211,7 @@ HISTOGRAM(HTTP_DISK_CACHE_OVERHEAD, 1, 32000000, 100, EXPONENTIAL, "HTTP Disk ca
 HISTOGRAM(CACHE_LM_INCONSISTENT, 0, 1, 2, BOOLEAN,  "Cache discovered inconsistent last-modified entry")
 HISTOGRAM(CACHE_SERVICE_LOCK_WAIT, 1, 10000, 10000, LINEAR, "Time spent waiting on the cache service lock (ms)")
 HISTOGRAM(CACHE_SERVICE_LOCK_WAIT_MAINTHREAD, 1, 10000, 10000, LINEAR, "Time spent waiting on the cache service lock on the main thread (ms)")
+HISTOGRAM(DISK_CACHE_SMART_SIZE_USING_OLD_MAX, 0, 1, 2, BOOLEAN, "Whether we are using the old default cache smart size")
 
 #define CACHE_LOCK_HISTOGRAM(x) \
   HISTOGRAM(CACHE_SERVICE_LOCK_WAIT_MAINTHREAD_##x, 1, 10 * 1000, 50, EXPONENTIAL, "Time spent waiting on the cache service lock (ms) on the main thread in " #x)
@@ -517,6 +521,11 @@ HISTOGRAM(BROWSERPROVIDER_XUL_IMPORT_TIME, 20, 600000, 20, EXPONENTIAL, "Time fo
 HISTOGRAM(BROWSERPROVIDER_XUL_IMPORT_BOOKMARKS, 1, 50000, 20, EXPONENTIAL, "Number of bookmarks in the original XUL places database")
 HISTOGRAM(BROWSERPROVIDER_XUL_IMPORT_HISTORY, 1, 1000000, 20, EXPONENTIAL, "Number of history entries in the original XUL places database")
 #endif
+
+/**
+ * Security UI Telemetry
+ */
+HISTOGRAM_ENUMERATED_VALUES(SECURITY_UI, 100, "Security UI Telemetry")
 
 #undef HISTOGRAM_ENUMERATED_VALUES
 #undef HISTOGRAM_BOOLEAN

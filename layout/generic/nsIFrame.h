@@ -22,13 +22,12 @@
 
 #include <stdio.h>
 #include "nsQueryFrame.h"
-#include "nsEvent.h"
-#include "nsStyleStruct.h"
 #include "nsStyleContext.h"
-#include "nsIContent.h"
+#include "nsStyleStruct.h"
+#include "nsStyleStructFwd.h"
 #include "nsHTMLReflowMetrics.h"
-#include "gfxMatrix.h"
 #include "nsFrameList.h"
+#include "nsIContent.h"
 #include "nsAlgorithm.h"
 #include "mozilla/layout/FrameChildList.h"
 #include "FramePropertyTable.h"
@@ -53,6 +52,7 @@
 struct nsHTMLReflowState;
 class nsHTMLReflowCommand;
 
+struct gfxMatrix;
 class nsIAtom;
 class nsPresContext;
 class nsIPresShell;
@@ -88,8 +88,6 @@ namespace layers {
 class Layer;
 }
 }
-
-typedef class nsIFrame nsIBox;
 
 /**
  * Indication of how the frame can be split. This is used when doing runaround
@@ -296,6 +294,10 @@ typedef PRUint64 nsFrameState;
 // Frame has a cached rasterization of anV
 // nsDisplayBackground display item
 #define NS_FRAME_HAS_CACHED_BACKGROUND              NS_FRAME_STATE_BIT(46)
+
+// The frame is a descendant of nsSVGTextFrame2 and is thus used for SVG
+// text layout.
+#define NS_FRAME_IS_SVG_TEXT                        NS_FRAME_STATE_BIT(47)
 
 // Box layout bits
 #define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
@@ -999,7 +1001,7 @@ public:
   static bool ComputeBorderRadii(const nsStyleCorners& aBorderRadius,
                                    const nsSize& aFrameSize,
                                    const nsSize& aBorderArea,
-                                   PRIntn aSkipSides,
+                                   int aSkipSides,
                                    nscoord aRadii[8]);
 
   /*
@@ -1540,7 +1542,20 @@ public:
     nscoord trailingWhitespace;
 
     // Floats encountered in the lines.
-    nsTArray<nsIFrame*> floats;
+    class FloatInfo {
+    public:
+      FloatInfo(const nsIFrame* aFrame, nscoord aWidth)
+        : mFrame(aFrame), mWidth(aWidth)
+      { }
+      const nsIFrame* Frame() const { return mFrame; }
+      nscoord         Width() const { return mWidth; }
+
+    private:
+      const nsIFrame* mFrame;
+      nscoord         mWidth;
+    };
+
+    nsTArray<FloatInfo> floats;
   };
 
   struct InlineMinWidthData : public InlineIntrinsicWidthData {
@@ -2355,7 +2370,7 @@ public:
    * Determine whether borders should not be painted on certain sides of the
    * frame.
    */
-  virtual PRIntn GetSkipSides() const { return 0; }
+  virtual int GetSkipSides() const { return 0; }
 
   /**
    * @returns true if this frame is selected.
@@ -2499,7 +2514,9 @@ public:
    */
   bool IsPseudoStackingContextFromStyle() {
     const nsStyleDisplay* disp = GetStyleDisplay();
-    return disp->mOpacity != 1.0f || disp->IsPositioned() || disp->IsFloating();
+    return disp->mOpacity != 1.0f ||
+           disp->IsPositioned(this) ||
+           disp->IsFloating(this);
   }
   
   virtual bool HonorPrintBackgroundSettings() { return true; }
@@ -2671,17 +2688,17 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   virtual void SetBounds(nsBoxLayoutState& aBoxLayoutState, const nsRect& aRect,
                          bool aRemoveOverflowAreas = false) = 0;
   NS_HIDDEN_(nsresult) Layout(nsBoxLayoutState& aBoxLayoutState);
-  nsIBox* GetChildBox() const
+  nsIFrame* GetChildBox() const
   {
     // box layout ends at box-wrapped frames, so don't allow these frames
     // to report child boxes.
     return IsBoxFrame() ? GetFirstPrincipalChild() : nullptr;
   }
-  nsIBox* GetNextBox() const
+  nsIFrame* GetNextBox() const
   {
     return (mParent && mParent->IsBoxFrame()) ? mNextSibling : nullptr;
   }
-  nsIBox* GetParentBox() const
+  nsIFrame* GetParentBox() const
   {
     return (mParent && mParent->IsBoxFrame()) ? mParent : nullptr;
   }
@@ -2703,7 +2720,7 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   bool IsNormalDirection() const { return (mState & NS_STATE_IS_DIRECTION_NORMAL) != 0; }
 
   NS_HIDDEN_(nsresult) Redraw(nsBoxLayoutState& aState, const nsRect* aRect = nullptr);
-  NS_IMETHOD RelayoutChildAtOrdinal(nsBoxLayoutState& aState, nsIBox* aChild)=0;
+  NS_IMETHOD RelayoutChildAtOrdinal(nsBoxLayoutState& aState, nsIFrame* aChild)=0;
   // XXX take this out after we've branched
   virtual bool GetMouseThrough() const { return false; }
 
@@ -2720,11 +2737,11 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
    */
   virtual bool HasTerminalNewline() const;
 
-  static bool AddCSSPrefSize(nsIBox* aBox, nsSize& aSize, bool& aWidth, bool& aHeightSet);
-  static bool AddCSSMinSize(nsBoxLayoutState& aState, nsIBox* aBox,
-                              nsSize& aSize, bool& aWidth, bool& aHeightSet);
-  static bool AddCSSMaxSize(nsIBox* aBox, nsSize& aSize, bool& aWidth, bool& aHeightSet);
-  static bool AddCSSFlex(nsBoxLayoutState& aState, nsIBox* aBox, nscoord& aFlex);
+  static bool AddCSSPrefSize(nsIFrame* aBox, nsSize& aSize, bool& aWidth, bool& aHeightSet);
+  static bool AddCSSMinSize(nsBoxLayoutState& aState, nsIFrame* aBox,
+                            nsSize& aSize, bool& aWidth, bool& aHeightSet);
+  static bool AddCSSMaxSize(nsIFrame* aBox, nsSize& aSize, bool& aWidth, bool& aHeightSet);
+  static bool AddCSSFlex(nsBoxLayoutState& aState, nsIFrame* aBox, nscoord& aFlex);
 
   // END OF BOX LAYOUT METHODS
   // The above methods have been migrated from nsIBox and are in the process of
@@ -2833,6 +2850,27 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
     VISIBILITY_CROSS_CHROME_CONTENT_BOUNDARY = 0x01
   };
   bool IsVisibleConsideringAncestors(PRUint32 aFlags = 0) const;
+
+  inline bool IsBlockInside() const;
+  inline bool IsBlockOutside() const;
+  inline bool IsInlineOutside() const;
+  inline PRUint8 GetDisplay() const;
+  inline bool IsFloating() const;
+  inline bool IsPositioned() const;
+  inline bool IsRelativelyPositioned() const;
+  inline bool IsAbsolutelyPositioned() const;
+
+  /**
+   * Returns the vertical-align value to be used for layout, if it is one
+   * of the enumerated values.  If this is an SVG text frame, it returns a value
+   * that corresponds to the value of dominant-baseline.  If the
+   * vertical-align property has length or percentage value, this returns
+   * eInvalidVerticalAlign.
+   */
+  PRUint8 VerticalAlignEnum() const;
+  enum { eInvalidVerticalAlign = 0xFF };
+
+  bool IsSVGText() const { return mState & NS_FRAME_IS_SVG_TEXT; }
 
 protected:
   // Members
@@ -3144,4 +3182,55 @@ FrameLinkEnumerator(const nsFrameList& aList, nsIFrame* aPrevFrame)
   mPrev = aPrevFrame;
   mFrame = aPrevFrame ? aPrevFrame->GetNextSibling() : aList.FirstChild();
 }
+
+#include "nsStyleStructInlines.h"
+
+bool
+nsIFrame::IsFloating() const
+{
+  return GetStyleDisplay()->IsFloating(this);
+}
+
+bool
+nsIFrame::IsPositioned() const
+{
+  return GetStyleDisplay()->IsPositioned(this);
+}
+
+bool
+nsIFrame::IsRelativelyPositioned() const
+{
+  return GetStyleDisplay()->IsRelativelyPositioned(this);
+}
+
+bool
+nsIFrame::IsAbsolutelyPositioned() const
+{
+  return GetStyleDisplay()->IsAbsolutelyPositioned(this);
+}
+
+bool
+nsIFrame::IsBlockInside() const
+{
+  return GetStyleDisplay()->IsBlockInside(this);
+}
+
+bool
+nsIFrame::IsBlockOutside() const
+{
+  return GetStyleDisplay()->IsBlockOutside(this);
+}
+
+bool
+nsIFrame::IsInlineOutside() const
+{
+  return GetStyleDisplay()->IsInlineOutside(this);
+}
+
+PRUint8
+nsIFrame::GetDisplay() const
+{
+  return GetStyleDisplay()->GetDisplay(this);
+}
+
 #endif /* nsIFrame_h___ */

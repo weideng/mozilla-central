@@ -117,10 +117,11 @@ protected:
   virtual nscoord GetIntrinsicWidth();
   virtual nscoord GetIntrinsicHeight();
 
-  virtual PRIntn GetSkipSides() const;
+  virtual int GetSkipSides() const;
 
-  // Hide or show our document viewer
-  void HideViewer();
+  // Show our document viewer. The document viewer is hidden via a script
+  // runner, so that we can save and restore the presentation if we're
+  // being reframed.
   void ShowViewer();
 
   /* Obtains the frame we should use for intrinsic size information if we are

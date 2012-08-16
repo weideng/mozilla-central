@@ -86,9 +86,11 @@ class EvalScriptGuard
     EvalCacheLookup lookup_;
     EvalCache::AddPtr p_;
 
+    Rooted<JSLinearString*> lookupStr_;
+
   public:
     EvalScriptGuard(JSContext *cx)
-      : cx_(cx), script_(cx)
+      : cx_(cx), script_(cx), lookupStr_(cx)
     {
         lookup_.str = NULL;
     }
@@ -98,6 +100,7 @@ class EvalScriptGuard
             CallDestroyScriptHook(cx_->runtime->defaultFreeOp(), script_);
             script_->isActiveEval = false;
             script_->isCachedEval = true;
+            lookup_.str = lookupStr_;
             if (lookup_.str && IsEvalCacheCandidate(script_))
                 cx_->runtime->evalCache.relookupOrAdd(p_, lookup_, script_);
         }
@@ -105,6 +108,7 @@ class EvalScriptGuard
 
     void lookupInEvalCache(JSLinearString *str, JSFunction *caller, unsigned staticLevel)
     {
+        lookupStr_ = str;
         lookup_.str = str;
         lookup_.caller = caller;
         lookup_.staticLevel = staticLevel;
@@ -170,7 +174,7 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, StackFrame *c
         args.rval().set(args[0]);
         return true;
     }
-    JSString *str = args[0].toString();
+    RootedString str(cx, args[0].toString());
 
     // ES5 15.1.2.1 steps 2-8.
 

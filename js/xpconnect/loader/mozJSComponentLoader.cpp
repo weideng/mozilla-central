@@ -16,6 +16,9 @@
 #ifdef ANDROID
 #include <android/log.h>
 #endif
+#ifdef XP_WIN
+#include <windows.h>
+#endif
 
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
@@ -181,6 +184,11 @@ Dump(JSContext *cx, unsigned argc, jsval *vp)
 #ifdef ANDROID
     __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", utf8str.get());
 #endif
+#ifdef XP_WIN
+    if (IsDebuggerPresent()) {
+      OutputDebugStringW(reinterpret_cast<const PRUnichar*>(chars));
+    }
+#endif
     fputs(utf8str.get(), stdout);
     fflush(stdout);
     return true;
@@ -263,12 +271,12 @@ File(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static JSFunctionSpec gGlobalFun[] = {
-    {"dump",    Dump,   1,0},
-    {"debug",   Debug,  1,0},
-    {"atob",    Atob,   1,0},
-    {"btoa",    Btoa,   1,0},
-    {"File",    File,   1,JSFUN_CONSTRUCTOR},
-    {nullptr,nullptr,0,0}
+    JS_FS("dump",    Dump,   1,0),
+    JS_FS("debug",   Debug,  1,0),
+    JS_FS("atob",    Atob,   1,0),
+    JS_FS("btoa",    Btoa,   1,0),
+    JS_FS("File",    File,   1,JSFUN_CONSTRUCTOR),
+    JS_FS_END
 };
 
 class JSCLContextHelper
@@ -730,8 +738,15 @@ mozJSComponentLoader::GlobalForLocation(nsIFile *aComponentFile,
         // any exceptions out to our caller. Ensure that the engine doesn't
         // eagerly report the exception.
         uint32_t oldopts = JS_GetOptions(cx);
-        JS_SetOptions(cx, oldopts | JSOPTION_NO_SCRIPT_RVAL |
-                      (exception ? JSOPTION_DONT_REPORT_UNCAUGHT : 0));
+        if (exception)
+            JS_SetOptions(cx, oldopts | JSOPTION_DONT_REPORT_UNCAUGHT);
+        JS::CompileOptions options(cx);
+        options.setPrincipals(nsJSPrincipals::get(mSystemPrincipal))
+               .setNoScriptRval(true)
+               .setVersion(JSVERSION_LATEST)
+               .setFileAndLine(nativePath.get(), 1)
+               .setSourcePolicy(JS::CompileOptions::LAZY_SOURCE);
+        JS::RootedObject rootedGlobal(cx, global);
 
         if (realFile) {
 #ifdef HAVE_PR_MEMMAP
@@ -781,10 +796,7 @@ mozJSComponentLoader::GlobalForLocation(nsIFile *aComponentFile,
                 return NS_ERROR_FAILURE;
             }
 
-            script = JS_CompileScriptForPrincipalsVersion(cx, global,
-                                                          nsJSPrincipals::get(mSystemPrincipal),
-                                                          buf, fileSize32, nativePath.get(), 1,
-                                                          JSVERSION_LATEST);
+            script = JS::Compile(cx, rootedGlobal, options, buf, fileSize32);
 
             PR_MemUnmap(buf, fileSize32);
 
@@ -826,10 +838,7 @@ mozJSComponentLoader::GlobalForLocation(nsIFile *aComponentFile,
                 NS_WARNING("Failed to read file");
                 return NS_ERROR_FAILURE;
             }
-            script = JS_CompileScriptForPrincipalsVersion(cx, global,
-                                                          nsJSPrincipals::get(mSystemPrincipal),
-                                                          buf, rlen, nativePath.get(), 1,
-                                                          JSVERSION_LATEST);
+            script = JS::Compile(cx, rootedGlobal, options, buf, rlen);
 
             free(buf);
 
@@ -846,12 +855,15 @@ mozJSComponentLoader::GlobalForLocation(nsIFile *aComponentFile,
             rv = scriptChannel->Open(getter_AddRefs(scriptStream));
             NS_ENSURE_SUCCESS(rv, rv);
 
-            PRUint32 len, bytesRead;
+            PRUint64 len64;
+            PRUint32 bytesRead;
 
-            rv = scriptStream->Available(&len);
+            rv = scriptStream->Available(&len64);
             NS_ENSURE_SUCCESS(rv, rv);
-            if (!len)
+            NS_ENSURE_TRUE(len64 < PR_UINT32_MAX, NS_ERROR_FILE_TOO_BIG);
+            if (!len64)
                 return NS_ERROR_FAILURE;
+            PRUint32 len = (PRUint32)len64;
 
             /* malloc an internal buf the size of the file */
             nsAutoArrayPtr<char> buf(new char[len + 1]);
@@ -865,10 +877,7 @@ mozJSComponentLoader::GlobalForLocation(nsIFile *aComponentFile,
 
             buf[len] = '\0';
 
-            script = JS_CompileScriptForPrincipalsVersion(cx, global,
-                                                          nsJSPrincipals::get(mSystemPrincipal),
-                                                          buf, bytesRead, nativePath.get(), 1,
-                                                          JSVERSION_LATEST);
+            script = JS::Compile(cx, rootedGlobal, options, buf, bytesRead);
         }
         // Propagate the exception, if one exists. Also, don't leave the stale
         // exception on this context.

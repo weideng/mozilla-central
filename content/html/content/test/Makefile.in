@@ -3,11 +3,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH          = ../../../..
+DEPTH          = @DEPTH@
 topsrcdir      = @top_srcdir@
 srcdir         = @srcdir@
 VPATH          = @srcdir@
-relativesrcdir = content/html/content/test
+relativesrcdir = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
@@ -265,6 +265,7 @@ MOCHITEST_FILES = \
 		test_bug745685.html \
 		test_input_file_picker.html \
 		test_bug763626.html \
+		test_bug780993.html \
 		$(NULL)
 
 MOCHITEST_BROWSER_FILES = \

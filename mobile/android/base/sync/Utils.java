@@ -215,34 +215,34 @@ public class Utils {
     return sha1Base32(account.toLowerCase(Locale.US));
   }
 
+  public static SharedPreferences getSharedPreferences(final Context context, final String product, final String username, final String serverURL, final String profile, final long version)
+      throws NoSuchAlgorithmException, UnsupportedEncodingException {
+    String prefsPath = getPrefsPath(product, username, serverURL, profile, version);
+    return context.getSharedPreferences(prefsPath, SHARED_PREFERENCES_MODE);
+  }
+
   /**
    * Get shared preferences path for a Sync account.
    *
+   * @param product the Firefox Sync product package name (like "org.mozilla.firefox").
    * @param username the Sync account name, optionally encoded with <code>Utils.usernameFromAccount</code>.
    * @param serverURL the Sync account server URL.
+   * @param profile the Firefox profile name.
+   * @param version the version of preferences to reference.
    * @return the path.
    * @throws NoSuchAlgorithmException
    * @throws UnsupportedEncodingException
    */
-  public static String getPrefsPath(String username, String serverURL)
-    throws NoSuchAlgorithmException, UnsupportedEncodingException {
-    return "sync.prefs." + sha1Base32(serverURL + ":" + usernameFromAccount(username));
-  }
+  public static String getPrefsPath(final String product, final String username, final String serverURL, final String profile, final long version)
+      throws NoSuchAlgorithmException, UnsupportedEncodingException {
+    final String encodedAccount = sha1Base32(serverURL + ":" + usernameFromAccount(username));
 
-  /**
-   * Get shared preferences for a Sync account.
-   *
-   * @param context Android <code>Context</code>.
-   * @param username the Sync account name, optionally encoded with <code>Utils.usernameFromAccount</code>.
-   * @param serverURL the Sync account server URL.
-   * @return a <code>SharedPreferences</code> instance.
-   * @throws NoSuchAlgorithmException
-   * @throws UnsupportedEncodingException
-   */
-  public static SharedPreferences getSharedPreferences(Context context, String username, String serverURL) throws NoSuchAlgorithmException, UnsupportedEncodingException {
-    String prefsPath = getPrefsPath(username, serverURL);
-    Logger.debug(LOG_TAG, "Shared preferences: " + prefsPath);
-    return context.getSharedPreferences(prefsPath, SHARED_PREFERENCES_MODE);
+    if (version <= 0) {
+      return "sync.prefs." + encodedAccount;
+    } else {
+      final String sanitizedProduct = product.replace('.', '!').replace(' ', '!');
+      return "sync.prefs." + sanitizedProduct + "." + encodedAccount + "." + profile + "." + version;
+    }
   }
 
   public static void addToIndexBucketMap(TreeMap<Long, ArrayList<String>> map, long index, String value) {
@@ -503,5 +503,21 @@ public class Utils {
   public static String formatDuration(long startMillis, long endMillis) {
     final long duration = endMillis - startMillis;
     return new DecimalFormat("#0.00 seconds").format(((double) duration) / 1000);
+  }
+
+  /**
+   * This will take a string containing a UTF-8 representation of a UTF-8
+   * byte array — e.g., "pÃ¯gÃ©ons1" — and return UTF-8 (e.g., "pïgéons1").
+   *
+   * This is the format produced by desktop Firefox when exchanging credentials
+   * containing non-ASCII characters.
+   */
+  public static String decodeUTF8(final String in) throws UnsupportedEncodingException {
+    final int length = in.length();
+    final byte[] asciiBytes = new byte[length];
+    for (int i = 0; i < length; ++i) {
+      asciiBytes[i] = (byte) in.codePointAt(i);
+    }
+    return new String(asciiBytes, "UTF-8");
   }
 }

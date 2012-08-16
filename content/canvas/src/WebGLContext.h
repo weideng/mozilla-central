@@ -111,11 +111,14 @@ enum WebGLTexelFormat
     // 1-channel formats
     R8,
     A8,
+    D16, // used for WEBGL_depth_texture extension
+    D32, // used for WEBGL_depth_texture extension
     R32F, // used for OES_texture_float extension
     A32F, // used for OES_texture_float extension
     // 2-channel formats
     RA8,
     RA32F,
+    D24S8, // used for WEBGL_depth_texture extension
     // 3-channel formats
     RGB8,
     BGRX8, // used for DOM elements. Source format only.
@@ -461,6 +464,7 @@ class WebGLContext :
     friend class WebGLExtensionCompressedTextureS3TC;
     friend class WebGLContextUserData;
     friend class WebGLMemoryPressureObserver;
+    friend class WebGLExtensionDepthTexture;
 
 public:
     WebGLContext();
@@ -1099,6 +1103,7 @@ protected:
     bool mMinCapability;
     bool mDisableExtensions;
     bool mHasRobustness;
+    bool mIsMesa;
 
     template<typename WebGLObjectType>
     void DeleteWebGLObjectsArray(nsTArray<WebGLObjectType>& array);
@@ -1146,6 +1151,7 @@ protected:
         EXT_texture_filter_anisotropic,
         WEBGL_lose_context,
         WEBGL_compressed_texture_s3tc,
+        WEBGL_depth_texture,
         WebGLExtensionID_number_of_extensions,
         WebGLExtensionID_unknown_extension
     };
@@ -1360,6 +1366,11 @@ protected:
     bool ShouldGenerateWarnings() const {
         return mAlreadyGeneratedWarnings < 32;
     }
+
+    uint64_t mLastUseIndex;
+
+    void LoseOldestWebGLContextIfLimitExceeded();
+    void UpdateLastUseIndex();
 
 #ifdef XP_MACOSX
     // see bug 713305. This RAII helper guarantees that we're on the discrete GPU, during its lifetime
@@ -2319,6 +2330,24 @@ public:
         return false;
     }
 
+    size_t UpperBoundNumSamplerUniforms() {
+        size_t numSamplerUniforms = 0;
+        for (size_t i = 0; i < mAttachedShaders.Length(); ++i) {
+            const WebGLShader *shader = mAttachedShaders[i];
+            if (!shader)
+                continue;
+            for (size_t j = 0; j < shader->mUniformInfos.Length(); ++j) {
+                WebGLUniformInfo u = shader->mUniformInfos[j];
+                if (u.type == SH_SAMPLER_2D ||
+                    u.type == SH_SAMPLER_CUBE)
+                {
+                    numSamplerUniforms += u.arraySize;
+                }
+            }
+        }
+        return numSamplerUniforms;
+    }
+
     bool NextGeneration()
     {
         if (!(mGeneration + 1).isValid())
@@ -2673,8 +2702,28 @@ public:
             !thisRect->Height())
             return false;
 
-        if (mTexturePtr)
-            return mAttachmentPoint == LOCAL_GL_COLOR_ATTACHMENT0;
+        if (mTexturePtr) {
+            if (!mTexturePtr->HasImageInfoAt(0, 0))
+                return false;
+
+            WebGLenum format = mTexturePtr->ImageInfoAt(0).Format();
+            switch (mAttachmentPoint)
+            {
+                case LOCAL_GL_COLOR_ATTACHMENT0:
+                    return format == LOCAL_GL_ALPHA ||
+                           format == LOCAL_GL_LUMINANCE ||
+                           format == LOCAL_GL_LUMINANCE_ALPHA ||
+                           format == LOCAL_GL_RGB ||
+                           format == LOCAL_GL_RGBA;
+                case LOCAL_GL_DEPTH_ATTACHMENT:
+                    return format == LOCAL_GL_DEPTH_COMPONENT;
+                case LOCAL_GL_DEPTH_STENCIL_ATTACHMENT:
+                    return format == LOCAL_GL_DEPTH_STENCIL;
+
+                default:
+                    MOZ_NOT_REACHED("Invalid WebGL texture format?");
+            }
+        } 
 
         if (mRenderbufferPtr) {
             WebGLenum format = mRenderbufferPtr->InternalFormat();
@@ -2919,6 +2968,9 @@ public:
         // enforce WebGL section 6.5 which is WebGL-specific, hence OpenGL itself would not
         // generate the INVALID_FRAMEBUFFER_OPERATION that we need here
         if (HasDepthStencilConflict())
+            return false;
+        
+        if (HasIncompleteAttachment())
             return false;
 
         if (!mColorAttachment.HasUninitializedRenderbuffer() &&
@@ -3174,12 +3226,14 @@ class WebGLMemoryMultiReporterWrapper
     // WebGLContexts ever created.
     typedef nsTArray<const WebGLContext*> ContextsArrayType;
     ContextsArrayType mContexts;
-    
+
     nsCOMPtr<nsIMemoryMultiReporter> mReporter;
 
     static WebGLMemoryMultiReporterWrapper* UniqueInstance();
 
     static ContextsArrayType & Contexts() { return UniqueInstance()->mContexts; }
+
+    friend class WebGLContext;
 
   public:
 

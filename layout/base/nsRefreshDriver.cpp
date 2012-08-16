@@ -24,6 +24,7 @@
 #include "nsContentUtils.h"
 #include "mozilla/Preferences.h"
 #include "nsIViewManager.h"
+#include "sampler.h"
 
 using mozilla::TimeStamp;
 using mozilla::TimeDuration;
@@ -298,6 +299,8 @@ NS_IMPL_ISUPPORTS1(nsRefreshDriver, nsITimerCallback)
 NS_IMETHODIMP
 nsRefreshDriver::Notify(nsITimer *aTimer)
 {
+  SAMPLE_LABEL("nsRefreshDriver", "Notify");
+
   NS_PRECONDITION(!mFrozen, "Why are we notified while frozen?");
   NS_PRECONDITION(mPresContext, "Why are we notified after disconnection?");
   NS_PRECONDITION(!nsContentUtils::GetCurrentJSContext(),
@@ -411,8 +414,14 @@ nsRefreshDriver::Notify(nsITimer *aTimer)
   }
 
   if (mViewManagerFlushIsPending) {
+#ifdef DEBUG_INVALIDATIONS
+    printf("Starting ProcessPendingUpdates\n");
+#endif
     mViewManagerFlushIsPending = false;
     mPresContext->GetPresShell()->GetViewManager()->ProcessPendingUpdates();
+#ifdef DEBUG_INVALIDATIONS
+    printf("Ending ProcessPendingUpdates\n");
+#endif
   }
 
   if (mThrottled ||

@@ -9,6 +9,7 @@ import org.mozilla.gecko.AwesomeBar.ContextMenuSubject;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
+import org.mozilla.gecko.util.GeckoEventListener;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -66,7 +67,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
         super(context);
         mSearchEngines = new ArrayList<SearchEngine>();
 
-        GeckoAppShell.registerGeckoEventListener("SearchEngines:Data", this);
+        registerEventListener("SearchEngines:Data");
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:Get", null));
     }
 
@@ -110,7 +111,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
     public void destroy() {
         AwesomeBarCursorAdapter adapter = getCursorAdapter();
-        GeckoAppShell.unregisterGeckoEventListener("SearchEngines:Data", this);
+        unregisterEventListener("SearchEngines:Data");
         if (adapter == null) {
             return;
         }
@@ -561,5 +562,13 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
         menu.setHeaderTitle(subject.title);
         return subject;
+    }
+
+    private void registerEventListener(String event) {
+        GeckoAppShell.getEventDispatcher().registerEventListener(event, this);
+    }
+
+    private void unregisterEventListener(String event) {
+        GeckoAppShell.getEventDispatcher().unregisterEventListener(event, this);
     }
 }

@@ -141,21 +141,18 @@
         * the file or from the end of the file is determined by
         * argument |whence|.  Note that |pos| may exceed the length of
         * the file.
-        * @param {number=} whence The reference position. If omitted or
-        * |OS.File.POS_START|, |pos| is taken from the start of the file.
-        * If |OS.File.POS_CURRENT|, |pos| is taken from the current position
-        * in the file. If |OS.File.POS_END|, |pos| is taken from the end of
-        * the file.
+        * @param {number=} whence The reference position. If omitted
+        * or |OS.File.POS_START|, |pos| is relative to the start of the
+        * file.  If |OS.File.POS_CURRENT|, |pos| is relative to the
+        * current position in the file. If |OS.File.POS_END|, |pos| is
+        * relative to the end of the file.
         *
         * @return The new position in the file.
         */
        setPosition: function setPosition(pos, whence) {
-         // We are cheating to avoid one unnecessary conversion:
-         // In this implementation,
-         // OS.File.POS_START == OS.Constants.libc.SEEK_SET
-         // OS.File.POS_CURRENT == OS.Constants.libc.SEEK_CUR
-         // OS.File.POS_END == OS.Constants.libc.SEEK_END
-         whence = (whence == undefined)?OS.Constants.libc.SEEK_SET:whence;
+         if (whence === undefined) {
+           whence = Const.SEEK_START;
+         }
          return throw_on_negative("setPosition",
            UnixFile.lseek(this.fd, pos, whence)
          );
@@ -335,22 +332,6 @@
            UnixFile.copyfile(sourcePath, destPath, null, flags)
          );
        };
-
-       // This implementation uses |copyfile(3)|, from the BSD library.
-       // Adding moving of hierarchies and/or attributes is just a flag
-       // away.
-       File.move = function movefile(sourcePath, destPath, options) {
-         // This implementation uses |copyfile(3)|, from the BSD library.
-         // It can move directory hierarchies.
-         options = options || noOptions;
-         let flags = Const.COPYFILE_DATA | Const.COPYFILE_MOVE;
-         if (options.noOverwrite) {
-           flags |= Const.COPYFILE_EXCL;
-         }
-         throw_on_negative("move",
-           UnixFile.copyfile(sourcePath, destPath, null, flags)
-         );
-       };
      } else {
        // If the OS does not implement file copying for us, we need to
        // implement it ourselves. For this purpose, we need to define
@@ -474,36 +455,37 @@
              pipe_write.dispose();
            }
          };
-     } else {
-       // Fallback implementation of pump for other Unix platforms.
-       pump = pump_userland;
-     }
-
-     // Implement |copy| using |pump|.
-     // This implementation would require some work before being able to
-     // copy directories
-     File.copy = function copy(sourcePath, destPath, options) {
-       options = options || noOptions;
-       let source, dest;
-       let result;
-       try {
-         source = File.open(sourcePath);
-         if (options.noOverwrite) {
-           dest = File.open(destPath, {create:true});
-         } else {
-           dest = File.open(destPath, {write:true});
-         }
-         result = pump(source, dest, options);
-       } catch (x) {
-         if (dest) {
-           dest.close();
-         }
-         if (source) {
-           source.close();
-         }
-         throw x;
+       } else {
+         // Fallback implementation of pump for other Unix platforms.
+         pump = pump_userland;
        }
-     };
+
+       // Implement |copy| using |pump|.
+       // This implementation would require some work before being able to
+       // copy directories
+       File.copy = function copy(sourcePath, destPath, options) {
+         options = options || noOptions;
+         let source, dest;
+         let result;
+         try {
+           source = File.open(sourcePath);
+           if (options.noOverwrite) {
+             dest = File.open(destPath, {create:true});
+           } else {
+             dest = File.open(destPath, {write:true});
+           }
+           result = pump(source, dest, options);
+         } catch (x) {
+           if (dest) {
+             dest.close();
+           }
+           if (source) {
+             source.close();
+           }
+           throw x;
+         }
+       };
+     } // End of definition of copy
 
      // Implement |move| using |rename| (wherever possible) or |copy|
      // (if files are on distinct devices).
@@ -539,13 +521,11 @@
          throw new File.Error();
        }
 
-         // Otherwise, copy and remove.
-         File.copy(sourcePath, destPath, options);
-         // FIXME: Clean-up in case of copy error?
-         File.remove(sourcePath);
-       };
-
-     } // End of definition of copy/move
+       // Otherwise, copy and remove.
+       File.copy(sourcePath, destPath, options);
+       // FIXME: Clean-up in case of copy error?
+       File.remove(sourcePath);
+     };
 
      /**
       * Iterate on one directory.
@@ -827,13 +807,12 @@
        return result;
      }
 
-     File.POS_START = exports.OS.Constants.libc.SEEK_SET;
-     File.POS_CURRENT = exports.OS.Constants.libc.SEEK_CUR;
-     File.POS_END = exports.OS.Constants.libc.SEEK_END;
-
      File.Unix = exports.OS.Unix.File;
      File.Error = exports.OS.Shared.Unix.Error;
      exports.OS.File = File;
 
+     Object.defineProperty(File, "POS_START", { value: OS.Shared.POS_START });
+     Object.defineProperty(File, "POS_CURRENT", { value: OS.Shared.POS_CURRENT });
+     Object.defineProperty(File, "POS_END", { value: OS.Shared.POS_END });
    })(this);
 }

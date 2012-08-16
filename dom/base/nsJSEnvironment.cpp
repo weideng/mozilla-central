@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsError.h"
 #include "nsJSEnvironment.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -1073,21 +1074,6 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime)
 
   mDefaultJSOptions = JSOPTION_PRIVATE_IS_NSISUPPORTS | JSOPTION_ALLOW_XML;
 
-  // The JS engine needs to keep the source code around in order to implement
-  // Function.prototype.toSource(). JSOPTION_ONLY_CNG_SOURCE causes the JS
-  // engine to retain the source code for scripts compiled in compileAndGo mode
-  // and compiled function bodies (from JS_CompileFunction*). In practice, this
-  // means content scripts and event handlers. It'd be nice to stop there and
-  // simply stub out requests for source on chrome code. Life is not so easy,
-  // unfortunately. Nobody relies on chrome toSource() working in core browser
-  // code, but chrome tests use it. The worst offenders are addons, which like
-  // to monkeypatch chrome functions by calling toSource() on them and using
-  // regular expression to modify them. So, even though we don't keep it in
-  // memory, we have to provide a way to get chrome source somehow. Enter
-  // SourceHook. When the JS engine is asked to provide the source for a
-  // function it doesn't have in memory, it calls this function to load it.
-  mDefaultJSOptions |= JSOPTION_ONLY_CNG_SOURCE;
-
   mContext = ::JS_NewContext(aRuntime, gStackSize);
   if (mContext) {
     ::JS_SetContextPrivate(mContext, static_cast<nsIScriptContext *>(this));
@@ -1554,7 +1540,8 @@ nsJSContext::CompileScript(const PRUnichar* aText,
                            const char *aURL,
                            PRUint32 aLineNo,
                            PRUint32 aVersion,
-                           nsScriptObjectHolder<JSScript>& aScriptObject)
+                           nsScriptObjectHolder<JSScript>& aScriptObject,
+                           bool aSaveSource /* = false */)
 {
   NS_ENSURE_TRUE(mIsInitialized, NS_ERROR_NOT_INITIALIZED);
 
@@ -1581,15 +1568,20 @@ nsJSContext::CompileScript(const PRUnichar* aText,
   XPCAutoRequest ar(mContext);
 
 
-  JSScript* script =
-    ::JS_CompileUCScriptForPrincipalsVersion(mContext,
-                                             scopeObject,
-                                             nsJSPrincipals::get(aPrincipal),
-                                             static_cast<const jschar*>(aText),
-                                             aTextLength,
-                                             aURL,
-                                             aLineNo,
-                                             JSVersion(aVersion));
+  JS::CompileOptions options(mContext);
+  JS::CompileOptions::SourcePolicy sp = aSaveSource ?
+    JS::CompileOptions::SAVE_SOURCE :
+    JS::CompileOptions::LAZY_SOURCE;
+  options.setPrincipals(nsJSPrincipals::get(aPrincipal))
+         .setFileAndLine(aURL, aLineNo)
+         .setVersion(JSVersion(aVersion))
+         .setSourcePolicy(sp);
+  JS::RootedObject rootedScope(mContext, scopeObject);
+  JSScript* script = JS::Compile(mContext,
+                                 rootedScope,
+                                 options,
+                                 static_cast<const jschar*>(aText),
+                                 aTextLength);
   if (!script) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -2018,9 +2010,8 @@ nsJSContext::Serialize(nsIObjectOutputStream* aStream, JSScript* aScriptObject)
   if (!aScriptObject)
     return NS_ERROR_FAILURE;
 
-  return nsContentUtils::XPConnect()->WriteScript(aStream, mContext, aScriptObject);
-    xpc_UnmarkGrayScript(aScriptObject);
-
+  return nsContentUtils::XPConnect()->WriteScript(aStream, mContext,
+                                                  xpc_UnmarkGrayScript(aScriptObject));
 }
 
 nsresult
@@ -2412,8 +2403,7 @@ nsJSContext::AddSupportsPrimitiveTojsvals(nsISupports *aArg, jsval *aArgv)
 
       p->GetData(&data);
 
-      JSBool ok = ::JS_NewNumberValue(cx, data, aArgv);
-      NS_ENSURE_TRUE(ok, NS_ERROR_OUT_OF_MEMORY);
+      *aArgv = ::JS_NumberValue(data);
 
       break;
     }
@@ -2425,8 +2415,7 @@ nsJSContext::AddSupportsPrimitiveTojsvals(nsISupports *aArg, jsval *aArgv)
 
       p->GetData(&data);
 
-      JSBool ok = ::JS_NewNumberValue(cx, data, aArgv);
-      NS_ENSURE_TRUE(ok, NS_ERROR_OUT_OF_MEMORY);
+      *aArgv = ::JS_NumberValue(data);
 
       break;
     }
@@ -2623,14 +2612,14 @@ TraceMallocDumpAllocations(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static JSFunctionSpec TraceMallocFunctions[] = {
-    {"TraceMallocDisable",         TraceMallocDisable,         0, 0},
-    {"TraceMallocEnable",          TraceMallocEnable,          0, 0},
-    {"TraceMallocOpenLogFile",     TraceMallocOpenLogFile,     1, 0},
-    {"TraceMallocChangeLogFD",     TraceMallocChangeLogFD,     1, 0},
-    {"TraceMallocCloseLogFD",      TraceMallocCloseLogFD,      1, 0},
-    {"TraceMallocLogTimestamp",    TraceMallocLogTimestamp,    1, 0},
-    {"TraceMallocDumpAllocations", TraceMallocDumpAllocations, 1, 0},
-    {nullptr,                       nullptr,                     0, 0}
+    JS_FS("TraceMallocDisable",         TraceMallocDisable,         0, 0),
+    JS_FS("TraceMallocEnable",          TraceMallocEnable,          0, 0),
+    JS_FS("TraceMallocOpenLogFile",     TraceMallocOpenLogFile,     1, 0),
+    JS_FS("TraceMallocChangeLogFD",     TraceMallocChangeLogFD,     1, 0),
+    JS_FS("TraceMallocCloseLogFD",      TraceMallocCloseLogFD,      1, 0),
+    JS_FS("TraceMallocLogTimestamp",    TraceMallocLogTimestamp,    1, 0),
+    JS_FS("TraceMallocDumpAllocations", TraceMallocDumpAllocations, 1, 0),
+    JS_FS_END
 };
 
 #endif /* NS_TRACE_MALLOC */
@@ -3660,29 +3649,6 @@ nsJSRuntime::CreateContext()
   return scriptContext.forget();
 }
 
-nsresult
-nsJSRuntime::ParseVersion(const nsString &aVersionStr, PRUint32 *flags)
-{
-    NS_PRECONDITION(flags, "Null flags param?");
-    JSVersion jsVersion = JSVERSION_UNKNOWN;
-    if (aVersionStr.Length() != 3 || aVersionStr[0] != '1' || aVersionStr[1] != '.')
-        jsVersion = JSVERSION_UNKNOWN;
-    else switch (aVersionStr[2]) {
-        case '0': jsVersion = JSVERSION_1_0; break;
-        case '1': jsVersion = JSVERSION_1_1; break;
-        case '2': jsVersion = JSVERSION_1_2; break;
-        case '3': jsVersion = JSVERSION_1_3; break;
-        case '4': jsVersion = JSVERSION_1_4; break;
-        case '5': jsVersion = JSVERSION_1_5; break;
-        case '6': jsVersion = JSVERSION_1_6; break;
-        case '7': jsVersion = JSVERSION_1_7; break;
-        case '8': jsVersion = JSVERSION_1_8; break;
-        default:  jsVersion = JSVERSION_UNKNOWN;
-    }
-    *flags = (PRUint32)jsVersion;
-    return NS_OK;
-}
-
 //static
 void
 nsJSRuntime::Startup()
@@ -3931,11 +3897,13 @@ ReadSourceFromFilename(JSContext *cx, const char *filename, jschar **src, PRUint
   rv = scriptChannel->Open(getter_AddRefs(scriptStream));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  PRUint32 rawLen;
+  PRUint64 rawLen;
   rv = scriptStream->Available(&rawLen);
   NS_ENSURE_SUCCESS(rv, rv);
   if (!rawLen)
     return NS_ERROR_FAILURE;
+  if (rawLen > PR_UINT32_MAX)
+    return NS_ERROR_FILE_TOO_BIG;
 
   // Allocate an internal buf the size of the file.
   nsAutoArrayPtr<unsigned char> buf(new unsigned char[rawLen]);
@@ -3968,8 +3936,7 @@ ReadSourceFromFilename(JSContext *cx, const char *filename, jschar **src, PRUint
 
 /*
   The JS engine calls this function when it needs the source for a chrome JS
-  function. See the comment in nsJSContext::nsJSContext about
-  JSOPTION_ONLY_CGN_SOURCE.
+  function. See the comment in nsJSRuntime::Init().
 */
 static bool
 SourceHook(JSContext *cx, JSScript *script, jschar **src, uint32_t *length)
@@ -3993,7 +3960,6 @@ SourceHook(JSContext *cx, JSScript *script, jschar **src, uint32_t *length)
   return true;
 }
 
-
 //static
 nsresult
 nsJSRuntime::Init()
@@ -4016,6 +3982,22 @@ nsJSRuntime::Init()
   rv = sRuntimeService->GetRuntime(&sRuntime);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // The JS engine needs to keep the source code around in order to implement
+  // Function.prototype.toSource(). It'd be nice to not have to do this for
+  // chrome code and simply stub out requests for source on it. Life is not so
+  // easy, unfortunately. Nobody relies on chrome toSource() working in core
+  // browser code, but chrome tests use it. The worst offenders are addons,
+  // which like to monkeypatch chrome functions by calling toSource() on them
+  // and using regular expressions to modify them. We avoid keeping most browser
+  // JS source code in memory by setting LAZY_SOURCE on JS::CompileOptions when
+  // compiling some chrome code. This causes the JS engine not save the source
+  // code in memory. When the JS engine is asked to provide the source for a
+  // function compiled with LAZY_SOURCE, it calls SourceHook to load it.
+  ///
+  // Note we do have to retain the source code in memory for scripts compiled in
+  // compileAndGo mode and compiled function bodies (from
+  // JS_CompileFunction*). In practice, this means content scripts and event
+  // handlers.
   JS_SetSourceHook(sRuntime, SourceHook);
 
   // Let's make sure that our main thread is the same as the xpcom main thread.
@@ -4030,6 +4012,11 @@ nsJSRuntime::Init()
     NS_DOMStructuredCloneError
   };
   JS_SetStructuredCloneCallbacks(sRuntime, &cloneCallbacks);
+
+  static js::DOMCallbacks DOMcallbacks = {
+    InstanceClassHasProtoAtDepth
+  };
+  SetDOMCallbacks(sRuntime, &DOMcallbacks);
 
   // Set these global xpconnect options...
   Preferences::RegisterCallback(MaxScriptRunTimePrefChangedCallback,

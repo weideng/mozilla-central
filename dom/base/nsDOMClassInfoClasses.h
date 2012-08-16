@@ -39,6 +39,7 @@ DOMCI_CLASS(MutationEvent)
 DOMCI_CLASS(UIEvent)
 DOMCI_CLASS(MouseEvent)
 DOMCI_CLASS(MouseScrollEvent)
+DOMCI_CLASS(WheelEvent)
 DOMCI_CLASS(DragEvent)
 DOMCI_CLASS(KeyboardEvent)
 DOMCI_CLASS(CompositionEvent)
@@ -193,6 +194,7 @@ DOMCI_CLASS(TreeColumns)
 #endif
 
 DOMCI_CLASS(CSSMozDocumentRule)
+DOMCI_CLASS(CSSSupportsRule)
 
 DOMCI_CLASS(BeforeUnloadEvent)
 
@@ -385,6 +387,7 @@ DOMCI_CLASS(MessageEvent)
 
 DOMCI_CLASS(DeviceStorage)
 DOMCI_CLASS(DeviceStorageCursor)
+DOMCI_CLASS(DeviceStorageStat)
 
 // Geolocation
 DOMCI_CLASS(GeoGeolocation)
@@ -460,6 +463,7 @@ DOMCI_CLASS(WebGLExtensionStandardDerivatives)
 DOMCI_CLASS(WebGLExtensionTextureFilterAnisotropic)
 DOMCI_CLASS(WebGLExtensionLoseContext)
 DOMCI_CLASS(WebGLExtensionCompressedTextureS3TC)
+DOMCI_CLASS(WebGLExtensionDepthTexture)
 
 DOMCI_CLASS(PaintRequest)
 DOMCI_CLASS(PaintRequestList)

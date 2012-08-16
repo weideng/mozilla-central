@@ -13,6 +13,7 @@ import org.mozilla.gecko.sqlite.SQLiteBridge;
 import org.mozilla.gecko.sqlite.SQLiteBridgeException;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
 import org.mozilla.gecko.sync.setup.SyncAccounts.SyncAccountParameters;
+import org.mozilla.gecko.util.GeckoEventListener;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -562,8 +563,7 @@ public class ProfileMigrator {
                     if (!parsePrefs(jsonPrefs))
                         return;
 
-                    GeckoAppShell.unregisterGeckoEventListener("Preferences:Data",
-                                                               (GeckoEventListener)this);
+                    unregisterEventListener("Preferences:Data", this);
 
                     // Now call the password provider to fill in the rest.
                     for (String location: SYNC_REALM_LIST) {
@@ -692,8 +692,7 @@ public class ProfileMigrator {
         protected void registerAndRequest() {
             GeckoAppShell.getHandler().post(new Runnable() {
                 public void run() {
-                    GeckoAppShell.registerGeckoEventListener("Preferences:Data",
-                                                             SyncTask.this);
+                    registerEventListener("Preferences:Data", SyncTask.this);
                     requestValues();
                 }
             });
@@ -718,6 +717,14 @@ public class ProfileMigrator {
                     }
                 }
             }.execute(mContext);
+        }
+
+        private void registerEventListener(String event, GeckoEventListener listener) {
+            GeckoAppShell.getEventDispatcher().registerEventListener(event, listener);
+        }
+
+        private void unregisterEventListener(String event, GeckoEventListener listener) {
+            GeckoAppShell.getEventDispatcher().unregisterEventListener(event, listener);
         }
     }
 

@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko;
 
+import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -141,29 +142,37 @@ public class PropertyAnimator extends TimerTask {
     }
 
     private void invalidate(final ElementHolder element, final int delta) {
-        if (element == null || element.view == null)
+        final View view = element.view;
+
+        Handler handler = view.getHandler();
+        if (handler == null)
             return;
 
         // Post the layout changes on the view's UI thread.
-        element.view.getHandler().post(new Runnable() {
+        handler.post(new Runnable() {
             @Override
             public void run() {
+                // check to see if the view was detached between the check above and this code
+                // getting run on the UI thread.
+                if (view.getHandler() == null)
+                    return;
+            
                 if (element.property == Property.SLIDE_TOP) {
-                    element.view.scrollTo(element.view.getScrollX(), delta);
+                    view.scrollTo(view.getScrollX(), delta);
                     return;
                 } else if (element.property == Property.SLIDE_LEFT) {
-                    element.view.scrollTo(delta, element.view.getScrollY());
+                    view.scrollTo(delta, view.getScrollY());
                     return;
                 }
 
-                ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) element.view.getLayoutParams();
+                ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
 
                 if (element.property == Property.SHRINK_TOP)
                     params.setMargins(params.leftMargin, delta, params.rightMargin, params.bottomMargin);
                 else if (element.property == Property.SHRINK_LEFT)
                     params.setMargins(delta, params.topMargin, params.rightMargin, params.bottomMargin);
 
-                element.view.requestLayout();
+                view.requestLayout();
             }
         });
     }

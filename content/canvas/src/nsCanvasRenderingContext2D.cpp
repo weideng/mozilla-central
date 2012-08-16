@@ -26,8 +26,7 @@
 #include "nsIVariant.h"
 
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIFrame.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsIScriptError.h"
 
 #include "nsCSSParser.h"
@@ -4317,8 +4316,11 @@ nsCanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                                            CanvasLayer *aOldLayer,
                                            LayerManager *aManager)
 {
-    if (!EnsureSurface()) 
+    // If we don't have anything to draw, don't bother.
+    if (!mValid || !mSurface || mSurface->CairoStatus() || !mThebes ||
+        !mSurfaceCreated) {
         return nullptr;
+    }
 
     if (!mResetLayer && aOldLayer) {
         CanvasRenderingContext2DUserData* userData =

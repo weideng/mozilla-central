@@ -6,8 +6,8 @@
 #include "nsIDocShell.h"
 #include "nsPresContext.h"
 #include "nsDOMClassInfoID.h"
-#include "nsDOMError.h"
-#include "nsIDOMNSEvent.h"
+#include "nsError.h"
+#include "nsIDOMEvent.h"
 #include "nsDOMWindowUtils.h"
 #include "nsQueryContentEventResult.h"
 #include "nsGlobalWindow.h"
@@ -64,7 +64,6 @@
 #include "sampler.h"
 #include "nsDOMBlobBuilder.h"
 #include "nsIDOMFileHandle.h"
-#include "nsIDOMApplicationRegistry.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -478,10 +477,13 @@ nsDOMWindowUtils::SendMouseEvent(const nsAString& aType,
                                  PRInt32 aButton,
                                  PRInt32 aClickCount,
                                  PRInt32 aModifiers,
-                                 bool aIgnoreRootScrollFrame)
+                                 bool aIgnoreRootScrollFrame,
+                                 float aPressure,
+                                 unsigned short aInputSourceArg)
 {
   return SendMouseEventCommon(aType, aX, aY, aButton, aClickCount, aModifiers,
-                              aIgnoreRootScrollFrame, false);
+                              aIgnoreRootScrollFrame, false, aPressure,
+                              aInputSourceArg);
 }
 
 NS_IMETHODIMP
@@ -491,11 +493,14 @@ nsDOMWindowUtils::SendMouseEventToWindow(const nsAString& aType,
                                          PRInt32 aButton,
                                          PRInt32 aClickCount,
                                          PRInt32 aModifiers,
-                                         bool aIgnoreRootScrollFrame)
+                                         bool aIgnoreRootScrollFrame,
+                                         float aPressure,
+                                         unsigned short aInputSourceArg)
 {
   SAMPLE_LABEL("nsDOMWindowUtils", "SendMouseEventToWindow");
   return SendMouseEventCommon(aType, aX, aY, aButton, aClickCount, aModifiers,
-                              aIgnoreRootScrollFrame, true);
+                              aIgnoreRootScrollFrame, true, aPressure,
+                              aInputSourceArg);
 }
 
 static nsIntPoint
@@ -516,6 +521,8 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
                                        PRInt32 aClickCount,
                                        PRInt32 aModifiers,
                                        bool aIgnoreRootScrollFrame,
+                                       float aPressure,
+                                       unsigned short aInputSourceArg,
                                        bool aToWindow)
 {
   if (!IsUniversalXPConnectCapable()) {
@@ -546,13 +553,18 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
   } else
     return NS_ERROR_FAILURE;
 
+  if (aInputSourceArg == nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN) {
+    aInputSourceArg = nsIDOMMouseEvent::MOZ_SOURCE_MOUSE;
+  }
+
   nsMouseEvent event(true, msg, widget, nsMouseEvent::eReal,
                      contextMenuKey ?
                        nsMouseEvent::eContextMenuKey : nsMouseEvent::eNormal);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.button = aButton;
   event.widget = widget;
-
+  event.pressure = aPressure;
+  event.inputSource = aInputSourceArg;
   event.clickCount = aClickCount;
   event.time = PR_IntervalNow();
   event.flags |= NS_EVENT_FLAG_SYNTHETIC_TEST_EVENT;
@@ -583,13 +595,16 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::SendMouseScrollEvent(const nsAString& aType,
-                                       float aX,
-                                       float aY,
-                                       PRInt32 aButton,
-                                       PRInt32 aScrollFlags,
-                                       PRInt32 aDelta,
-                                       PRInt32 aModifiers)
+nsDOMWindowUtils::SendWheelEvent(float aX,
+                                 float aY,
+                                 double aDeltaX,
+                                 double aDeltaY,
+                                 double aDeltaZ,
+                                 PRUint32 aDeltaMode,
+                                 PRInt32 aModifiers,
+                                 PRInt32 aLineOrPageDeltaX,
+                                 PRInt32 aLineOrPageDeltaY,
+                                 PRUint32 aOptions)
 {
   if (!IsUniversalXPConnectCapable()) {
     return NS_ERROR_DOM_SECURITY_ERR;
@@ -598,36 +613,45 @@ nsDOMWindowUtils::SendMouseScrollEvent(const nsAString& aType,
   // get the widget to send the event to
   nsPoint offset;
   nsCOMPtr<nsIWidget> widget = GetWidget(&offset);
-  if (!widget)
+  if (!widget) {
     return NS_ERROR_NULL_POINTER;
+  }
 
-  PRInt32 msg;
-  if (aType.EqualsLiteral("DOMMouseScroll"))
-    msg = NS_MOUSE_SCROLL;
-  else if (aType.EqualsLiteral("MozMousePixelScroll"))
-    msg = NS_MOUSE_PIXEL_SCROLL;
-  else
-    return NS_ERROR_UNEXPECTED;
+  widget::WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, widget);
+  wheelEvent.modifiers = GetWidgetModifiers(aModifiers);
+  wheelEvent.deltaX = aDeltaX;
+  wheelEvent.deltaY = aDeltaY;
+  wheelEvent.deltaZ = aDeltaZ;
+  wheelEvent.deltaMode = aDeltaMode;
+  wheelEvent.isMomentum =
+    (aOptions & WHEEL_EVENT_CAUSED_BY_MOMENTUM) != 0;
+  wheelEvent.isPixelOnlyDevice =
+    (aOptions & WHEEL_EVENT_CAUSED_BY_PIXEL_ONLY_DEVICE) != 0;
+  NS_ENSURE_TRUE(
+    !wheelEvent.isPixelOnlyDevice ||
+      aDeltaMode == nsIDOMWheelEvent::DOM_DELTA_PIXEL,
+    NS_ERROR_INVALID_ARG);
+  wheelEvent.customizedByUserPrefs =
+    (aOptions & WHEEL_EVENT_CUSTOMIZED_BY_USER_PREFS) != 0;
+  wheelEvent.lineOrPageDeltaX = aLineOrPageDeltaX;
+  wheelEvent.lineOrPageDeltaY = aLineOrPageDeltaY;
+  wheelEvent.widget = widget;
 
-  nsMouseScrollEvent event(true, msg, widget);
-  event.modifiers = GetWidgetModifiers(aModifiers);
-  event.button = aButton;
-  event.widget = widget;
-  event.delta = aDelta;
-  event.scrollFlags = aScrollFlags;
-
-  event.time = PR_IntervalNow();
+  wheelEvent.time = PR_Now() / 1000;
 
   nsPresContext* presContext = GetPresContext();
-  if (!presContext)
-    return NS_ERROR_FAILURE;
+  NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
 
-  event.refPoint = ToWidgetPoint(aX, aY, offset, presContext);
+  wheelEvent.refPoint = ToWidgetPoint(aX, aY, offset, presContext);
 
   nsEventStatus status;
-  return widget->DispatchEvent(&event, status);
+  nsresult rv = widget->DispatchEvent(&wheelEvent, status);
+  NS_ENSURE_SUCCESS(rv, rv);
+  // ESM must not return negative values for overflow.
+  NS_ENSURE_TRUE(wheelEvent.overflowDeltaX >= 0.0, NS_ERROR_FAILURE);
+  NS_ENSURE_TRUE(wheelEvent.overflowDeltaY >= 0.0, NS_ERROR_FAILURE);
+  return rv;
 }
-
 
 NS_IMETHODIMP
 nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
@@ -977,11 +1001,8 @@ nsDOMWindowUtils::GarbageCollect(nsICycleCollectorListener *aListener,
   }
 #endif
 
-  for (int i = 0; i < 3; i++) {
-    nsJSContext::GarbageCollectNow(js::gcreason::DOM_UTILS);
-    nsJSContext::CycleCollectNow(aListener, aExtraForgetSkippableCalls);
-  }
   nsJSContext::GarbageCollectNow(js::gcreason::DOM_UTILS);
+  nsJSContext::CycleCollectNow(aListener, aExtraForgetSkippableCalls);
 
   return NS_OK;
 }
@@ -1006,7 +1027,7 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType,
                                          float aX,
                                          float aY,
                                          PRUint32 aDirection,
-                                         PRFloat64 aDelta,
+                                         double aDelta,
                                          PRInt32 aModifiers,
                                          PRUint32 aClickCount)
 {
@@ -2279,6 +2300,22 @@ nsDOMWindowUtils::CheckAndClearPaintedState(nsIDOMElement* aElement, bool* aResu
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsDOMWindowUtils::PreventFurtherDialogs()
+{
+  // Permanently disable further dialogs for this window.
+
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
+
+  static_cast<nsGlobalWindow*>(window.get())->PreventFurtherDialogs(true);
+  return NS_OK;
+}
+
 static nsresult
 GetFileOrBlob(const nsAString& aName, const jsval& aBlobParts,
               const jsval& aParameters, JSContext* aCx,
@@ -2551,47 +2588,6 @@ nsDOMWindowUtils::SetScrollPositionClampingScrollPortSize(float aWidth, float aH
     nsPresContext::CSSPixelsToAppUnits(aHeight));
 
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::SetIsApp(bool aValue)
-{
-  if (!IsUniversalXPConnectCapable()) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
-  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
-
-  static_cast<nsGlobalWindow*>(window.get())->SetIsApp(aValue);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::SetApp(const nsAString& aManifestURL)
-{
-  if (!IsUniversalXPConnectCapable()) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
-  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
-
-  return static_cast<nsGlobalWindow*>(window.get())->SetApp(aManifestURL);
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::GetApp(mozIDOMApplication** aApplication)
-{
-  if (!IsUniversalXPConnectCapable()) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
-  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
-
-  return static_cast<nsGlobalWindow*>(window.get())->GetApp(aApplication);
 }
 
 nsresult

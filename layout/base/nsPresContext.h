@@ -116,6 +116,7 @@ public:
 #define NS_AUTHOR_SPECIFIED_BACKGROUND      (1 << 0)
 #define NS_AUTHOR_SPECIFIED_BORDER          (1 << 1)
 #define NS_AUTHOR_SPECIFIED_PADDING         (1 << 2)
+#define NS_AUTHOR_SPECIFIED_TEXT_SHADOW     (1 << 3)
 
 class nsRootPresContext;
 
@@ -1275,13 +1276,13 @@ public:
    * Callers must call UnregisterPluginForGeometryUpdates before
    * the aPlugin frame is destroyed.
    */
-  void RegisterPluginForGeometryUpdates(nsObjectFrame* aPlugin);
+  void RegisterPluginForGeometryUpdates(nsIContent* aPlugin);
   /**
    * Stops a plugin receiving geometry updates (position and clip
    * region). If the plugin was not already registered, this does
    * nothing.
    */
-  void UnregisterPluginForGeometryUpdates(nsObjectFrame* aPlugin);
+  void UnregisterPluginForGeometryUpdates(nsIContent* aPlugin);
 
   /**
    * Iterate through all plugins that are registered for geometry updates
@@ -1385,7 +1386,7 @@ protected:
 
   nsCOMPtr<nsITimer> mNotifyDidPaintTimer;
   nsCOMPtr<nsITimer> mUpdatePluginGeometryTimer;
-  nsTHashtable<nsPtrHashKey<nsObjectFrame> > mRegisteredPlugins;
+  nsTHashtable<nsRefPtrHashKey<nsIContent> > mRegisteredPlugins;
   // if mNeedsToUpdatePluginGeometry is set, then this is the frame to
   // use as the root of the subtree to search for plugin updates, or
   // null to use the root frame of this prescontext

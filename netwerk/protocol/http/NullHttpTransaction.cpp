@@ -12,7 +12,7 @@
 namespace mozilla {
 namespace net {
 
-NS_IMPL_THREADSAFE_ISUPPORTS0(NullHttpTransaction);
+NS_IMPL_THREADSAFE_ISUPPORTS0(NullHttpTransaction)
 
 NullHttpTransaction::NullHttpTransaction(nsHttpConnectionInfo *ci,
                                          nsIInterfaceRequestor *callbacks,
@@ -89,7 +89,7 @@ NullHttpTransaction::Caps()
   return mCaps;
 }
 
-PRUint32
+PRUint64
 NullHttpTransaction::Available()
 {
   return 0;

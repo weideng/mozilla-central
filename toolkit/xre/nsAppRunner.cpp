@@ -803,11 +803,8 @@ nsXULAppInfo::InvalidateCachesOnRestart()
       return NS_ERROR_NOT_AVAILABLE;
     }
     static const char kInvalidationHeader[] = NS_LINEBREAK "InvalidateCaches=1" NS_LINEBREAK;
-    rv = PR_Write(fd, kInvalidationHeader, sizeof(kInvalidationHeader) - 1);
+    PR_Write(fd, kInvalidationHeader, sizeof(kInvalidationHeader) - 1);
     PR_Close(fd);
-    
-    if (NS_FAILED(rv))
-      return rv;
   }
   return NS_OK;
 }
@@ -1486,8 +1483,6 @@ XRE_GetBinaryPath(const char* argv0, nsIFile* *aResult)
 {
   return mozilla::BinaryPath::GetFile(argv0, aResult);
 }
-
-#define NS_ERROR_LAUNCHED_CHILD_PROCESS NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_PROFILE, 200)
 
 #ifdef XP_WIN
 #include "nsWindowsRestart.cpp"
@@ -3225,6 +3220,13 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     gdk_rgb_set_install(TRUE);
 #endif
 
+  // Set program name to the one defined in application.ini.
+  {
+    nsCAutoString program(gAppData->name);
+    ToLowerCase(program);
+    g_set_prgname(program.get());
+  }
+
   // Initialize GTK here for splash.
 
   // Open the display ourselves instead of using gtk_init, so that we can
@@ -3571,7 +3573,7 @@ XREMain::XRE_mainRun()
 
   rv = mScopedXPCom->SetWindowCreator(mNativeApp);
   NS_TIME_FUNCTION_MARK("ScopedXPCOMStartup: SetWindowCreator");
-  NS_ENSURE_SUCCESS(rv, 1);
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
   NS_TIME_FUNCTION_MARK("ScopedXPCOMStartup: Done");
 
@@ -3597,7 +3599,7 @@ XREMain::XRE_mainRun()
 
   if (mStartOffline) {
     nsCOMPtr<nsIIOService2> io (do_GetService("@mozilla.org/network/io-service;1"));
-    NS_ENSURE_TRUE(io, 1);
+    NS_ENSURE_TRUE(io, NS_ERROR_FAILURE);
     io->SetManageOfflineStatus(false);
     io->SetOffline(true);
   }
@@ -3605,7 +3607,7 @@ XREMain::XRE_mainRun()
   {
     nsCOMPtr<nsIObserver> startupNotifier
       (do_CreateInstance(NS_APPSTARTUPNOTIFIER_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, 1);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
     startupNotifier->Observe(nullptr, APPSTARTUP_TOPIC, nullptr);
   }
@@ -3614,7 +3616,7 @@ XREMain::XRE_mainRun()
 
   nsCOMPtr<nsIAppStartup> appStartup
     (do_GetService(NS_APPSTARTUP_CONTRACTID));
-  NS_ENSURE_TRUE(appStartup, 1);
+  NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
   NS_TIME_FUNCTION_MARK("Created AppStartup");
 
@@ -3642,7 +3644,7 @@ XREMain::XRE_mainRun()
       rv = mProfileSvc->GetSelectedProfile(getter_AddRefs(selectedProfile));
       if (NS_FAILED(rv)) {
         gDoProfileReset = false;
-        return 1;
+        return NS_ERROR_FAILURE;
       }
     }
 
@@ -3683,15 +3685,15 @@ XREMain::XRE_mainRun()
 
   nsCOMPtr<nsIFile> workingDir;
   rv = NS_GetSpecialDirectory(NS_OS_CURRENT_WORKING_DIR, getter_AddRefs(workingDir));
-  NS_ENSURE_SUCCESS(rv, 1);
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
   if (!mShuttingDown) {
     cmdLine = do_CreateInstance("@mozilla.org/toolkit/command-line;1");
-    NS_ENSURE_TRUE(cmdLine, 1);
+    NS_ENSURE_TRUE(cmdLine, NS_ERROR_FAILURE);
 
     rv = cmdLine->Init(gArgc, gArgv, workingDir,
                        nsICommandLine::STATE_INITIAL_LAUNCH);
-    NS_ENSURE_SUCCESS(rv, 1);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
     /* Special-case services that need early access to the command
         line. */
@@ -3724,7 +3726,7 @@ XREMain::XRE_mainRun()
     NS_TIME_FUNCTION_MARK("Next: CreateHiddenWindow");
 
     rv = appStartup->CreateHiddenWindow();
-    NS_ENSURE_SUCCESS(rv, 1);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
 #if defined(HAVE_DESKTOP_STARTUP_ID) && defined(MOZ_WIDGET_GTK)
     nsGTKToolkit* toolkit = nsGTKToolkit::GetToolkit();
@@ -3744,13 +3746,13 @@ XREMain::XRE_mainRun()
     // we re-initialize the command-line service and do appleevents munging
     // after we are sure that we're not restarting
     cmdLine = do_CreateInstance("@mozilla.org/toolkit/command-line;1");
-    NS_ENSURE_TRUE(cmdLine, 1);
+    NS_ENSURE_TRUE(cmdLine, NS_ERROR_FAILURE);
 
     CommandLineServiceMac::SetupMacCommandLine(gArgc, gArgv, false);
 
     rv = cmdLine->Init(gArgc, gArgv,
                         workingDir, nsICommandLine::STATE_INITIAL_LAUNCH);
-    NS_ENSURE_SUCCESS(rv, 1);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 #endif
 
     nsCOMPtr<nsIObserverService> obsService =
@@ -3765,7 +3767,7 @@ XREMain::XRE_mainRun()
 
   if (!mShuttingDown) {
     rv = cmdLine->Run();
-    NS_ENSURE_SUCCESS_LOG(rv, 1);
+    NS_ENSURE_SUCCESS_LOG(rv, NS_ERROR_FAILURE);
 
     appStartup->GetShuttingDown(&mShuttingDown);
   }

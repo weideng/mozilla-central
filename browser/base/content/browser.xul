@@ -564,6 +564,7 @@
                  onblur="setTimeout(function() document.getElementById('identity-box').style.MozUserFocus = '', 0);">
           <box id="notification-popup-box" hidden="true" align="center">
             <image id="default-notification-icon" class="notification-anchor-icon" role="button"/>
+            <image id="identity-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="geo-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="addons-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="indexedDB-notification-icon" class="notification-anchor-icon" role="button"/>
@@ -658,6 +659,7 @@
       <toolbaritem id="social-toolbar-button"
                    class="toolbarbutton-1 chromeclass-toolbar-additional"
                    removable="false"
+                   pack="center"
                    title="&socialToolbar.title;"
                    hidden="true">
         <hbox id="social-toolbar-button-box" class="social-statusarea-container">
@@ -787,7 +789,7 @@
         </toolbarbutton>
       </toolbaritem>
 
-      <hbox id="window-controls" hidden="true" fullscreencontrol="true" pack="end">
+      <hbox id="window-controls" hidden="true" pack="end">
         <toolbarbutton id="minimize-button"
                        tooltiptext="&fullScreenMinimize.tooltip;"
                        oncommand="window.minimize();"/>

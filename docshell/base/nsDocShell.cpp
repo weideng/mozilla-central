@@ -96,7 +96,7 @@
 #include "nsDocShellEditorData.h"
 
 // Helper Classes
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsEscape.h"
 
 // Interfaces Needed
@@ -179,9 +179,7 @@
 #include "nsIWebBrowserPrint.h"
 #endif
 
-#include "nsPluginError.h"
 #include "nsContentUtils.h"
-#include "nsContentErrors.h"
 #include "nsIChannelPolicy.h"
 #include "nsIContentSecurityPolicy.h"
 
@@ -191,6 +189,9 @@
 #include "nsITimedChannel.h"
 #include "mozilla/StartupTimeline.h"
 #include "nsIFrameMessageManager.h"
+
+#include "mozilla/Telemetry.h"
+#include "nsISecurityUITelemetry.h"
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
                      NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
@@ -225,12 +226,6 @@ static PRUint32 gValidateOrigin = 0xffffffff;
 // all documents have loaded in milliseconds before favoring normal
 // native event dispatch priorites over performance
 #define NS_EVENT_STARVATION_DELAY_HINT 2000
-
-// This is needed for displaying an error message 
-// when navigation is attempted on a document when printing
-// The value arbitrary as long as it doesn't conflict with
-// any of the other values in the errors in DisplayLoadError
-#define NS_ERROR_DOCUMENT_IS_PRINTMODE  NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_GENERAL,2001)
 
 #ifdef PR_LOGGING
 #ifdef DEBUG
@@ -948,11 +943,9 @@ NS_IMETHODIMP nsDocShell::GetInterface(const nsIID & aIID, void **aSink)
     }
     else if (aIID.Equals(NS_GET_IID(nsIDocument)) &&
              NS_SUCCEEDED(EnsureContentViewer())) {
-        nsCOMPtr<nsIDOMDocument> domDoc;
-        mContentViewer->GetDOMDocument(getter_AddRefs(domDoc));
-        if (!domDoc)
-            return NS_NOINTERFACE;
-        return domDoc->QueryInterface(aIID, aSink);
+        nsCOMPtr<nsIDocument> doc = mContentViewer->GetDocument();
+        doc.forget(aSink);
+        return *aSink ? NS_OK : NS_NOINTERFACE;
     }
     else if (aIID.Equals(NS_GET_IID(nsIApplicationCacheContainer))) {
         *aSink = nullptr;
@@ -2845,7 +2838,10 @@ nsDocShell::CanAccessItem(nsIDocShellTreeItem* aTargetItem,
     //             window with javascript
     // Bug 408052: Adopt "ancestor" frame navigation policy
 
-    // Now do a security check
+    // Now do a security check.
+    //
+    // Disallow navigation if the two frames are not part of the same app, or if
+    // they have different is-in-browser-element states.
     //
     // Allow navigation if
     //  1) aAccessingItem can script aTargetItem or one of its ancestors in
@@ -2856,7 +2852,29 @@ nsDocShell::CanAccessItem(nsIDocShellTreeItem* aTargetItem,
 
     if (aTargetItem == aAccessingItem) {
         // A frame is allowed to navigate itself.
-        return true;  
+        return true;
+    }
+
+    nsCOMPtr<nsIDocShell> targetDS = do_QueryInterface(aTargetItem);
+    nsCOMPtr<nsIDocShell> accessingDS = do_QueryInterface(aAccessingItem);
+    if (!!targetDS != !!accessingDS) {
+        // We must be able to convert both or neither to nsIDocShell.
+        return false;
+    }
+
+    if (targetDS && accessingDS) {
+        bool targetInBrowser = false, accessingInBrowser = false;
+        targetDS->GetIsInBrowserElement(&targetInBrowser);
+        accessingDS->GetIsInBrowserElement(&accessingInBrowser);
+
+        PRUint32 targetAppId = 0, accessingAppId = 0;
+        targetDS->GetAppId(&targetAppId);
+        accessingDS->GetAppId(&accessingAppId);
+
+        if (targetInBrowser != accessingInBrowser ||
+            targetAppId != accessingAppId) {
+            return false;
+        }
     }
 
     nsCOMPtr<nsIDocShellTreeItem> accessingRoot;
@@ -4040,8 +4058,16 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
                 rv = stss->IsStsURI(aURI, &isStsHost);
                 NS_ENSURE_SUCCESS(rv, rv);
 
-                if (isStsHost)
+                PRUint32 bucketId;
+                if (isStsHost) {
                   cssClass.AssignLiteral("badStsCert");
+                  //measuring STS separately allows us to measure click through
+                  //rates easily
+                  bucketId = nsISecurityUITelemetry::WARNING_BAD_CERT_STS;
+                } else {
+                  bucketId = nsISecurityUITelemetry::WARNING_BAD_CERT;
+                }
+
 
                 if (Preferences::GetBool(
                         "browser.xul.error_pages.expert_bad_cert", false)) {
@@ -4054,6 +4080,10 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
                         "security.alternate_certificate_error_page");
                 if (alternateErrorPage)
                     errorPage.Assign(alternateErrorPage);
+
+                if (errorPage.EqualsIgnoreCase("certerror")) 
+                    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SECURITY_UI, bucketId);
+
             } else {
                 error.AssignLiteral("nssFailure2");
             }
@@ -4071,10 +4101,19 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI *aURI,
         if (alternateErrorPage)
             errorPage.Assign(alternateErrorPage);
 
-        if (NS_ERROR_PHISHING_URI == aError)
+        PRUint32 bucketId;
+        if (NS_ERROR_PHISHING_URI == aError) {
             error.AssignLiteral("phishingBlocked");
-        else
+            bucketId = nsISecurityUITelemetry::WARNING_PHISHING_PAGE;
+        } else {
             error.AssignLiteral("malwareBlocked");
+            bucketId = nsISecurityUITelemetry::WARNING_MALWARE_PAGE;
+        }
+
+        if (errorPage.EqualsIgnoreCase("blocked"))
+            mozilla::Telemetry::Accumulate(mozilla::Telemetry::SECURITY_UI,
+                                           bucketId);
+
         cssClass.AssignLiteral("blacklist");
     }
     else {
@@ -6033,16 +6072,18 @@ nsDocShell::OnStateChange(nsIWebProgress * aProgress, nsIRequest * aRequest,
         channel->GetURI(getter_AddRefs(uri));
         nsCAutoString aURI;
         uri->GetAsciiSpec(aURI);
-        if (this == aProgress){
+
+        nsCOMPtr<nsIWyciwygChannel>  wcwgChannel(do_QueryInterface(aRequest));
+        nsCOMPtr<nsIWebProgress> webProgress =
+            do_QueryInterface(GetAsSupports(this));
+
+        // We don't update navigation timing for wyciwyg channels
+        if (this == aProgress && !wcwgChannel){
             rv = MaybeInitTiming();
             if (mTiming) {
                 mTiming->NotifyFetchStart(uri, ConvertLoadTypeToNavigationType(mLoadType));
             } 
         }
-
-        nsCOMPtr<nsIWyciwygChannel>  wcwgChannel(do_QueryInterface(aRequest));
-        nsCOMPtr<nsIWebProgress> webProgress =
-            do_QueryInterface(GetAsSupports(this));
 
         // Was the wyciwyg document loaded on this docshell?
         if (wcwgChannel && !mLSHE && (mItemType == typeContent) && aProgress == webProgress.get()) {
@@ -8319,16 +8360,19 @@ nsDocShell::InternalLoad(nsIURI * aURI,
         
         bool isNewWindow = false;
         if (!targetDocShell) {
-            nsCOMPtr<nsIDOMWindow> win =
+            nsCOMPtr<nsPIDOMWindow> win =
                 do_GetInterface(GetAsSupports(this));
             NS_ENSURE_TRUE(win, NS_ERROR_NOT_AVAILABLE);
 
             nsDependentString name(aWindowTarget);
             nsCOMPtr<nsIDOMWindow> newWin;
-            rv = win->Open(EmptyString(), // URL to load
-                           name,          // window name
-                           EmptyString(), // Features
-                           getter_AddRefs(newWin));
+            nsCAutoString spec;
+            if (aURI)
+                aURI->GetSpec(spec);
+            rv = win->OpenNoNavigate(NS_ConvertUTF8toUTF16(spec),
+                                     name,          // window name
+                                     EmptyString(), // Features
+                                     getter_AddRefs(newWin));
 
             // In some cases the Open call doesn't actually result in a new
             // window being opened.  We can detect these cases by examining the
@@ -11372,20 +11416,6 @@ nsDocShell::GetIsContent(bool *aIsContent)
     *aIsContent = (mItemType == typeContent);
     return NS_OK;
 }
-
-NS_IMETHODIMP
-nsDocShell::GetExtendedOrigin(nsIURI *aUri, nsACString &aResult)
-{
-    bool isInBrowserElement;
-    GetIsInBrowserElement(&isInBrowserElement);
-
-    nsCOMPtr<nsIScriptSecurityManager> ssmgr =
-      do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
-    NS_ENSURE_TRUE(ssmgr, false);
-
-    return ssmgr->GetExtendedOrigin(aUri, mAppId, isInBrowserElement, aResult);
-}
-
 
 bool
 nsDocShell::IsOKToLoadURI(nsIURI* aURI)

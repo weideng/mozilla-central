@@ -368,6 +368,7 @@ class Compiler : public BaseCompiler
     Rooted<GlobalObject*> globalObj;
     const HeapSlot *globalSlots;  /* Original slots pointer. */
 
+    SPSInstrumentation sps;
     Assembler masm;
     FrameState frame;
 
@@ -527,7 +528,7 @@ private:
     CompileStatus finishThisUp();
     CompileStatus pushActiveFrame(JSScript *script, uint32_t argc);
     void popActiveFrame();
-    void updatePCCounts(jsbytecode *pc, Label *start, bool *updated);
+    void updatePCCounts(jsbytecode *pc, bool *updated);
     void updatePCTypes(jsbytecode *pc, FrameEntry *fe);
     void updateArithCounts(jsbytecode *pc, FrameEntry *fe,
                              JSValueType firstUseType, JSValueType secondUseType);
@@ -581,7 +582,7 @@ private:
     bool constantFoldBranch(jsbytecode *target, bool taken);
     bool emitStubCmpOp(BoolStub stub, jsbytecode *target, JSOp fused);
     bool iter(unsigned flags);
-    void iterNext(ptrdiff_t offset);
+    void iterNext();
     bool iterMore(jsbytecode *target);
     void iterEnd();
     MaybeJump loadDouble(FrameEntry *fe, FPRegisterID *fpReg, bool *allocated);

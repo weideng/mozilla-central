@@ -72,7 +72,8 @@ public:
                                  const char *aURL,
                                  PRUint32 aLineNo,
                                  PRUint32 aVersion,
-                                 nsScriptObjectHolder<JSScript>& aScriptObject);
+                                 nsScriptObjectHolder<JSScript>& aScriptObject,
+                                 bool aSaveSource = false);
   virtual nsresult ExecuteScript(JSScript* aScriptObject,
                                  JSObject* aScopeObject,
                                  nsAString* aRetValue,
@@ -316,8 +317,6 @@ public:
   NS_DECL_ISUPPORTS
 
   virtual already_AddRefed<nsIScriptContext> CreateContext();
-
-  virtual nsresult ParseVersion(const nsString &aVersionStr, PRUint32 *flags);
 
   virtual nsresult DropScriptObject(void *object);
   virtual nsresult HoldScriptObject(void *object);

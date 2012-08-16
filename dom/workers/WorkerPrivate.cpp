@@ -31,6 +31,7 @@
 #include "js/MemoryMetrics.h"
 #include "nsAlgorithm.h"
 #include "nsContentUtils.h"
+#include "nsError.h"
 #include "nsDOMJSUtils.h"
 #include "nsGUIEvent.h"
 #include "nsJSEnvironment.h"
@@ -372,30 +373,38 @@ struct MainThreadWorkerStructuredCloneCallbacks
       nsISupports* wrappedObject = wrappedNative->Native();
       NS_ASSERTION(wrappedObject, "Null pointer?!");
 
-      // See if the wrapped native is a nsIDOMFile.
-      nsCOMPtr<nsIDOMFile> file = do_QueryInterface(wrappedObject);
-      if (file) {
-        nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
-        if (mutableFile && NS_SUCCEEDED(mutableFile->SetMutable(false))) {
-          nsIDOMFile* filePtr = file;
-          if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_FILE, 0) &&
-              JS_WriteBytes(aWriter, &filePtr, sizeof(filePtr))) {
-            clonedObjects->AppendElement(file);
-            return true;
+      nsISupports* ccISupports = nullptr;
+      wrappedObject->QueryInterface(NS_GET_IID(nsCycleCollectionISupports),
+                                    reinterpret_cast<void**>(&ccISupports));
+      if (ccISupports) {
+        NS_WARNING("Cycle collected objects are not supported!");
+      }
+      else {
+        // See if the wrapped native is a nsIDOMFile.
+        nsCOMPtr<nsIDOMFile> file = do_QueryInterface(wrappedObject);
+        if (file) {
+          nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
+          if (mutableFile && NS_SUCCEEDED(mutableFile->SetMutable(false))) {
+            nsIDOMFile* filePtr = file;
+            if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_FILE, 0) &&
+                JS_WriteBytes(aWriter, &filePtr, sizeof(filePtr))) {
+              clonedObjects->AppendElement(file);
+              return true;
+            }
           }
         }
-      }
 
-      // See if the wrapped native is a nsIDOMBlob.
-      nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(wrappedObject);
-      if (blob) {
-        nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
-        if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(false))) {
-          nsIDOMBlob* blobPtr = blob;
-          if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_BLOB, 0) &&
-              JS_WriteBytes(aWriter, &blobPtr, sizeof(blobPtr))) {
-            clonedObjects->AppendElement(blob);
-            return true;
+        // See if the wrapped native is a nsIDOMBlob.
+        nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(wrappedObject);
+        if (blob) {
+          nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
+          if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(false))) {
+            nsIDOMBlob* blobPtr = blob;
+            if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_BLOB, 0) &&
+                JS_WriteBytes(aWriter, &blobPtr, sizeof(blobPtr))) {
+              clonedObjects->AppendElement(blob);
+              return true;
+            }
           }
         }
       }
@@ -823,14 +832,12 @@ public:
 
 class NotifyRunnable : public WorkerControlRunnable
 {
-  bool mFromJSObjectFinalizer;
   Status mStatus;
 
 public:
-  NotifyRunnable(WorkerPrivate* aWorkerPrivate, bool aFromJSObjectFinalizer,
-                 Status aStatus)
+  NotifyRunnable(WorkerPrivate* aWorkerPrivate, Status aStatus)
   : WorkerControlRunnable(aWorkerPrivate, WorkerThread, UnchangedBusyCount),
-    mFromJSObjectFinalizer(aFromJSObjectFinalizer), mStatus(aStatus)
+    mStatus(aStatus)
   {
     NS_ASSERTION(aStatus == Terminating || aStatus == Canceling ||
                  aStatus == Killing, "Bad status!");
@@ -840,12 +847,8 @@ public:
   PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   {
     // Modify here, but not in PostRun! This busy count addition will be matched
-    // by the CloseEventRunnable. If we're running from a finalizer there is no
-    // need to modify the count because future changes to the busy count will
-    // have no effect.
-    return mFromJSObjectFinalizer ?
-           true :
-           aWorkerPrivate->ModifyBusyCount(aCx, true);
+    // by the CloseEventRunnable.
+    return aWorkerPrivate->ModifyBusyCount(aCx, true);
   }
 
   bool
@@ -937,9 +940,6 @@ public:
     JSObject* target = aWorkerPrivate->IsAcceptingEvents() ?
                        aWorkerPrivate->GetJSObject() :
                        nullptr;
-    if (target) {
-      aWorkerPrivate->AssertInnerWindowIsCorrect();
-    }
 
     PRUint64 innerWindowId;
 
@@ -954,6 +954,8 @@ public:
         aWorkerPrivate->QueueRunnable(this);
         return true;
       }
+
+      aWorkerPrivate->AssertInnerWindowIsCorrect();
 
       innerWindowId = aWorkerPrivate->GetInnerWindowId();
     }
@@ -1554,9 +1556,6 @@ public:
     if (!mWorkerPrivate) {
 #ifdef DEBUG
       nsCAutoString message("Unable to report memory for ");
-      if (mWorkerPrivate->IsChromeWorker()) {
-        message.AppendLiteral("Chrome");
-      }
       message += NS_LITERAL_CSTRING("Worker (") + mAddressString +
                  NS_LITERAL_CSTRING(")! It is either using ctypes or is in "
                                     "the process of being destroyed");
@@ -2014,7 +2013,7 @@ WorkerPrivateParent<Derived>::NotifyPrivate(JSContext* aCx, Status aStatus)
   mQueuedRunnables.Clear();
 
   nsRefPtr<NotifyRunnable> runnable =
-    new NotifyRunnable(ParentAsWorkerPrivate(), !aCx, aStatus);
+    new NotifyRunnable(ParentAsWorkerPrivate(), aStatus);
   return runnable->Dispatch(aCx);
 }
 
@@ -2158,7 +2157,7 @@ WorkerPrivateParent<Derived>::ModifyBusyCount(JSContext* aCx, bool aIncrease)
   NS_ASSERTION(aIncrease || mBusyCount, "Mismatched busy count mods!");
 
   if (aIncrease) {
-    if (mBusyCount++ == 0) {
+    if (mBusyCount++ == 0 && mJSObject) {
       if (!RootJSObject(aCx, true)) {
         return false;
       }
@@ -2166,7 +2165,7 @@ WorkerPrivateParent<Derived>::ModifyBusyCount(JSContext* aCx, bool aIncrease)
     return true;
   }
 
-  if (--mBusyCount == 0) {
+  if (--mBusyCount == 0 && mJSObject) {
     if (!RootJSObject(aCx, false)) {
       return false;
     }
@@ -2193,6 +2192,7 @@ WorkerPrivateParent<Derived>::RootJSObject(JSContext* aCx, bool aRoot)
 
   if (aRoot != mJSObjectRooted) {
     if (aRoot) {
+      NS_ASSERTION(mJSObject, "Nothing to root?");
       if (!JS_AddNamedObjectRoot(aCx, &mJSObject, "Worker root")) {
         NS_WARNING("JS_AddNamedObjectRoot failed!");
         return false;
@@ -3816,44 +3816,45 @@ WorkerPrivate::RunExpiredTimeouts(JSContext* aCx)
     }
 
     NS_ASSERTION(mRunningExpiredTimeouts, "Someone changed this!");
-
-    // Reschedule intervals.
-    if (info->mIsInterval && !info->mCanceled) {
-      PRUint32 timeoutIndex = mTimeouts.IndexOf(info);
-      NS_ASSERTION(timeoutIndex != PRUint32(-1),
-                   "Should still be in the main list!");
-
-      // This is nasty but we have to keep the old nsAutoPtr from deleting the
-      // info we're about to re-add.
-      mTimeouts[timeoutIndex].forget();
-      mTimeouts.RemoveElementAt(timeoutIndex);
-
-      NS_ASSERTION(!mTimeouts.Contains(info), "Shouldn't have duplicates!");
-
-      // NB: We must ensure that info->mTargetTime > now (where now is the
-      // now above, not literally TimeStamp::Now()) or we will remove the
-      // interval in the next loop below.
-      info->mTargetTime = NS_MAX(info->mTargetTime + info->mInterval,
-                                 now + TimeDuration::FromMilliseconds(1));
-      mTimeouts.InsertElementSorted(info, comparator);
-    }
   }
 
   // No longer possible to be called recursively.
   mRunningExpiredTimeouts = false;
 
   // Now remove canceled and expired timeouts from the main list.
-  for (PRUint32 index = 0; index < mTimeouts.Length(); ) {
+  // NB: The timeouts present in expiredTimeouts must have the same order
+  // with respect to each other in mTimeouts.  That is, mTimeouts is just
+  // expiredTimeouts with extra elements inserted.  There may be unexpired
+  // timeouts that have been inserted between the expired timeouts if the
+  // timeout event handler called setTimeout/setInterval.
+  for (PRUint32 index = 0, expiredTimeoutIndex = 0,
+       expiredTimeoutLength = expiredTimeouts.Length();
+       index < mTimeouts.Length(); ) {
     nsAutoPtr<TimeoutInfo>& info = mTimeouts[index];
-    if (info->mTargetTime <= now || info->mCanceled) {
-      NS_ASSERTION(!info->mIsInterval || info->mCanceled,
-                   "Interval timers can only be removed when canceled!");
-      mTimeouts.RemoveElement(info);
+    if ((expiredTimeoutIndex < expiredTimeoutLength &&
+         info == expiredTimeouts[expiredTimeoutIndex] &&
+         ++expiredTimeoutIndex) ||
+        info->mCanceled) {
+      if (info->mIsInterval && !info->mCanceled) {
+        // Reschedule intervals.
+        info->mTargetTime = info->mTargetTime + info->mInterval;
+        // Don't resort the list here, we'll do that at the end.
+        ++index;
+      }
+      else {
+        mTimeouts.RemoveElement(info);
+      }
     }
     else {
-      index++;
+      // If info did not match the current entry in expiredTimeouts, it
+      // shouldn't be there at all.
+      NS_ASSERTION(!expiredTimeouts.Contains(info),
+                   "Our timeouts are out of order!");
+      ++index;
     }
   }
+
+  mTimeouts.Sort(comparator);
 
   // Either signal the parent that we're no longer using timeouts or reschedule
   // the timer.

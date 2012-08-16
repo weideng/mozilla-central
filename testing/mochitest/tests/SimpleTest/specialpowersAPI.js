@@ -9,6 +9,7 @@ var Ci = Components.interfaces;
 var Cc = Components.classes;
 
 Components.utils.import("resource://mochikit/MockFilePicker.jsm");
+Components.utils.import("resource://gre/modules/Services.jsm");
 
 function SpecialPowersAPI() { 
   this._consoleListeners = [];
@@ -409,6 +410,10 @@ SpecialPowersAPI.prototype = {
     return MockFilePicker
   },
 
+  get Services() {
+    return wrapPrivileged(Services);
+  },
+
   getDOMWindowUtils: function(aWindow) {
     if (aWindow == this.window.get() && this.DOMWindowUtils != null)
       return this.DOMWindowUtils;
@@ -634,6 +639,12 @@ SpecialPowersAPI.prototype = {
     return obj.QueryInterface(Ci[iface]); 
   },
 
+  call_Instanceof: function (obj1, obj2) {
+     obj1=unwrapIfWrapped(obj1);
+     obj2=unwrapIfWrapped(obj2);
+     return obj1 instanceof obj2;
+  },
+
   // Mimic the get*Pref API
   getBoolPref: function(aPrefName) {
     return (this._getPref(aPrefName, 'BOOL'));
@@ -821,6 +832,10 @@ SpecialPowersAPI.prototype = {
 
   forceGC: function() {
     Components.utils.forceGC();
+  },
+
+  forceCC: function() {
+    Components.utils.forceCC();
   },
 
   exactGC: function(win, callback) {
@@ -1116,7 +1131,7 @@ SpecialPowersAPI.prototype = {
     if (typeof(urlOrDocument) == "string") {
       return Cc["@mozilla.org/network/io-service;1"].
                getService(Ci.nsIIOService).
-               newURI(url, null, null);
+               newURI(urlOrDocument, null, null);
     }
     // Assume document.
     return this.getDocumentURIObject(urlOrDocument);

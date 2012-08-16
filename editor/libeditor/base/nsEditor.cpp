@@ -62,7 +62,6 @@
 #include "nsIDOMHTMLElement.h"          // for nsIDOMHTMLElement
 #include "nsIDOMKeyEvent.h"             // for nsIDOMKeyEvent, etc
 #include "nsIDOMMouseEvent.h"           // for nsIDOMMouseEvent
-#include "nsIDOMNSEvent.h"              // for nsIDOMNSEvent
 #include "nsIDOMNamedNodeMap.h"         // for nsIDOMNamedNodeMap
 #include "nsIDOMNode.h"                 // for nsIDOMNode, etc
 #include "nsIDOMNodeList.h"             // for nsIDOMNodeList
@@ -113,9 +112,6 @@ class nsIOutputStream;
 class nsIParserService;
 class nsITransferable;
 
-#define NS_ERROR_EDITOR_NO_SELECTION NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_EDITOR,1)
-#define NS_ERROR_EDITOR_NO_TEXTNODE  NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_EDITOR,2)
-
 #ifdef NS_DEBUG_EDITOR
 static bool gNoisy = false;
 #endif
@@ -144,7 +140,7 @@ nsEditor::nsEditor()
 ,  mFlags(0)
 ,  mUpdateCount(0)
 ,  mPlaceHolderBatch(0)
-,  mAction(kOpNone)
+,  mAction(EditAction::none)
 ,  mHandlingActionCount(0)
 ,  mIMETextOffset(0)
 ,  mIMEBufferLength(0)
@@ -786,7 +782,7 @@ nsEditor::Undo(PRUint32 aCount)
   CanUndo(&hasTxnMgr, &hasTransaction);
   NS_ENSURE_TRUE(hasTransaction, NS_OK);
 
-  nsAutoRules beginRulesSniffing(this, kOpUndo, nsIEditor::eNone);
+  nsAutoRules beginRulesSniffing(this, EditAction::undo, nsIEditor::eNone);
 
   if (!mTxnMgr) {
     return NS_OK;
@@ -829,7 +825,7 @@ nsEditor::Redo(PRUint32 aCount)
   CanRedo(&hasTxnMgr, &hasTransaction);
   NS_ENSURE_TRUE(hasTransaction, NS_OK);
 
-  nsAutoRules beginRulesSniffing(this, kOpRedo, nsIEditor::eNone);
+  nsAutoRules beginRulesSniffing(this, EditAction::redo, nsIEditor::eNone);
 
   if (!mTxnMgr) {
     return NS_OK;
@@ -1348,7 +1344,7 @@ NS_IMETHODIMP nsEditor::CreateNode(const nsAString& aTag,
 {
   PRInt32 i;
 
-  nsAutoRules beginRulesSniffing(this, kOpCreateNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::createNode, nsIEditor::eNext);
   
   for (i = 0; i < mActionListeners.Count(); i++)
     mActionListeners[i]->WillCreateNode(aTag, aParent, aPosition);
@@ -1380,7 +1376,7 @@ NS_IMETHODIMP nsEditor::InsertNode(nsIDOMNode * aNode,
                                    PRInt32      aPosition)
 {
   PRInt32 i;
-  nsAutoRules beginRulesSniffing(this, kOpInsertNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
 
   for (i = 0; i < mActionListeners.Count(); i++)
     mActionListeners[i]->WillInsertNode(aNode, aParent, aPosition);
@@ -1407,7 +1403,7 @@ nsEditor::SplitNode(nsIDOMNode * aNode,
                     nsIDOMNode **aNewLeftNode)
 {
   PRInt32 i;
-  nsAutoRules beginRulesSniffing(this, kOpSplitNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::splitNode, nsIEditor::eNext);
 
   for (i = 0; i < mActionListeners.Count(); i++)
     mActionListeners[i]->WillSplitNode(aNode, aOffset);
@@ -1456,7 +1452,7 @@ nsEditor::JoinNodes(nsIDOMNode * aLeftNode,
                     nsIDOMNode * aParent)
 {
   PRInt32 i;
-  nsAutoRules beginRulesSniffing(this, kOpJoinNode, nsIEditor::ePrevious);
+  nsAutoRules beginRulesSniffing(this, EditAction::joinNode, nsIEditor::ePrevious);
 
   // remember some values; later used for saved selection updating.
   // find the offset between the nodes to be joined.
@@ -1495,7 +1491,7 @@ nsEditor::DeleteNode(nsIDOMNode* aNode)
 nsresult
 nsEditor::DeleteNode(nsINode* aNode)
 {
-  nsAutoRules beginRulesSniffing(this, kOpCreateNode, nsIEditor::ePrevious);
+  nsAutoRules beginRulesSniffing(this, EditAction::createNode, nsIEditor::ePrevious);
 
   // save node location for selection updating code.
   for (PRInt32 i = 0; i < mActionListeners.Count(); i++) {
@@ -2183,7 +2179,7 @@ nsEditor::GetRootElement(nsIDOMElement **aRootElement)
 /** All editor operations which alter the doc should be prefaced
  *  with a call to StartOperation, naming the action and direction */
 NS_IMETHODIMP
-nsEditor::StartOperation(OperationID opID, nsIEditor::EDirection aDirection)
+nsEditor::StartOperation(EditAction opID, nsIEditor::EDirection aDirection)
 {
   mAction = opID;
   mDirection = aDirection;
@@ -2196,7 +2192,7 @@ nsEditor::StartOperation(OperationID opID, nsIEditor::EDirection aDirection)
 NS_IMETHODIMP
 nsEditor::EndOperation()
 {
-  mAction = kOpNone;
+  mAction = EditAction::none;
   mDirection = eNone;
   return NS_OK;
 }
@@ -2706,7 +2702,7 @@ NS_IMETHODIMP nsEditor::DeleteText(nsIDOMCharacterData *aElement,
   nsRefPtr<DeleteTextTxn> txn;
   nsresult result = CreateTxnForDeleteText(aElement, aOffset, aLength,
                                            getter_AddRefs(txn));
-  nsAutoRules beginRulesSniffing(this, kOpDeleteText, nsIEditor::ePrevious);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteText, nsIEditor::ePrevious);
   if (NS_SUCCEEDED(result))  
   {
     // let listeners know what's up
@@ -4312,7 +4308,7 @@ nsEditor::DeleteSelectionImpl(EDirection aAction,
 
   if (NS_SUCCEEDED(res))  
   {
-    nsAutoRules beginRulesSniffing(this, kOpDeleteSelection, aAction);
+    nsAutoRules beginRulesSniffing(this, EditAction::deleteSelection, aAction);
     PRInt32 i;
     // Notify nsIEditActionListener::WillDelete[Selection|Text|Node]
     if (!deleteNode)
@@ -5035,7 +5031,7 @@ nsEditor::HandleKeyPressEvent(nsIDOMKeyEvent* aKeyEvent)
 }
 
 nsresult
-nsEditor::HandleInlineSpellCheck(OperationID action,
+nsEditor::HandleInlineSpellCheck(EditAction action,
                                    nsISelection *aSelection,
                                    nsIDOMNode *previousSelectedNode,
                                    PRInt32 previousSelectedOffset,
@@ -5044,14 +5040,13 @@ nsEditor::HandleInlineSpellCheck(OperationID action,
                                    nsIDOMNode *aEndNode,
                                    PRInt32 aEndOffset)
 {
-  return mInlineSpellChecker ? mInlineSpellChecker->SpellCheckAfterEditorChange(action,
-                                                       aSelection,
-                                                       previousSelectedNode,
-                                                       previousSelectedOffset,
-                                                       aStartNode,
-                                                       aStartOffset,
-                                                       aEndNode,
-                                                       aEndOffset) : NS_OK;
+  // Have to cast action here because this method is from an IDL
+  return mInlineSpellChecker ? mInlineSpellChecker->SpellCheckAfterEditorChange(
+                                 (PRInt32)action, aSelection,
+                                 previousSelectedNode, previousSelectedOffset,
+                                 aStartNode, aStartOffset, aEndNode,
+                                 aEndOffset)
+                             : NS_OK;
 }
 
 already_AddRefed<nsIContent>
@@ -5334,8 +5329,7 @@ bool
 nsEditor::IsAcceptableInputEvent(nsIDOMEvent* aEvent)
 {
   // If the event is trusted, the event should always cause input.
-  nsCOMPtr<nsIDOMNSEvent> NSEvent = do_QueryInterface(aEvent);
-  NS_ENSURE_TRUE(NSEvent, false);
+  NS_ENSURE_TRUE(aEvent, false);
 
   // If this is mouse event but this editor doesn't have focus, we shouldn't
   // handle it.
@@ -5348,7 +5342,7 @@ nsEditor::IsAcceptableInputEvent(nsIDOMEvent* aEvent)
   }
 
   bool isTrusted;
-  nsresult rv = NSEvent->GetIsTrusted(&isTrusted);
+  nsresult rv = aEvent->GetIsTrusted(&isTrusted);
   NS_ENSURE_SUCCESS(rv, false);
   if (isTrusted) {
     return true;
@@ -5390,7 +5384,7 @@ nsEditor::SetSuppressDispatchingInputEvent(bool aSuppress)
 }
 
 nsEditor::HandlingTrustedAction::HandlingTrustedAction(nsEditor* aSelf,
-                                                       nsIDOMNSEvent* aEvent)
+                                                       nsIDOMEvent* aEvent)
 {
   MOZ_ASSERT(aEvent);
 

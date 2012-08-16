@@ -18,7 +18,7 @@
 #include "nsIFrame.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsNodeInfoManager.h"
 #include "nsNetUtil.h"
 #include "nsXPCOMStrings.h"
@@ -44,7 +44,6 @@
 #include "nsIDOMHTMLVideoElement.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
-#include "nsContentErrors.h"
 #include "nsCrossSiteListenerProxy.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsICachingChannel.h"
@@ -1959,12 +1958,12 @@ void nsHTMLMediaElement::UnbindFromTree(bool aDeep,
 }
 
 #ifdef MOZ_RAW
-static const char gRawTypes[][16] = {
+static const char gRawTypes[2][16] = {
   "video/x-raw",
   "video/x-raw-yuv"
 };
 
-static const char* gRawCodecs[] = {
+static const char* gRawCodecs[1] = {
   nullptr
 };
 
@@ -2048,7 +2047,7 @@ nsHTMLMediaElement::IsOggType(const nsACString& aType)
 // See http://www.rfc-editor.org/rfc/rfc2361.txt for the definitions
 // of WAVE media types and codec types. However, the audio/vnd.wave
 // MIME type described there is not used.
-const char nsHTMLMediaElement::gWaveTypes[4][16] = {
+const char nsHTMLMediaElement::gWaveTypes[4][15] = {
   "audio/x-wav",
   "audio/wav",
   "audio/wave",
@@ -2084,7 +2083,7 @@ nsHTMLMediaElement::IsWaveType(const nsACString& aType)
 #endif
 
 #ifdef MOZ_WEBM
-const char nsHTMLMediaElement::gWebMTypes[2][17] = {
+const char nsHTMLMediaElement::gWebMTypes[2][11] = {
   "video/webm",
   "audio/webm"
 };
@@ -2120,7 +2119,7 @@ nsHTMLMediaElement::IsWebMType(const nsACString& aType)
 #endif
 
 #ifdef MOZ_GSTREAMER
-const char nsHTMLMediaElement::gH264Types[3][17] = {
+const char nsHTMLMediaElement::gH264Types[3][16] = {
   "video/mp4",
   "video/3gpp",
   "video/quicktime",
@@ -2204,7 +2203,7 @@ nsHTMLMediaElement::CanHandleMediaType(const char* aMIMEType,
   }
 #endif
 #ifdef MOZ_MEDIA_PLUGINS
-  if (GetMediaPluginHost()->FindDecoder(nsDependentCString(aMIMEType), aCodecList))
+  if (IsMediaPluginsEnabled() && GetMediaPluginHost()->FindDecoder(nsDependentCString(aMIMEType), aCodecList))
     return CANPLAY_MAYBE;
 #endif
   return CANPLAY_NO;
@@ -2230,7 +2229,7 @@ bool nsHTMLMediaElement::ShouldHandleMediaType(const char* aMIMEType)
     return true;
 #endif
 #ifdef MOZ_MEDIA_PLUGINS
-  if (GetMediaPluginHost()->FindDecoder(nsDependentCString(aMIMEType), NULL))
+  if (IsMediaPluginsEnabled() && GetMediaPluginHost()->FindDecoder(nsDependentCString(aMIMEType), NULL))
     return true;
 #endif
   // We should not return true for Wave types, since there are some
@@ -2346,7 +2345,7 @@ nsHTMLMediaElement::CreateDecoder(const nsACString& aType)
   }
 #endif
 #ifdef MOZ_MEDIA_PLUGINS
-  if (GetMediaPluginHost()->FindDecoder(aType, NULL)) {
+  if (IsMediaPluginsEnabled() && GetMediaPluginHost()->FindDecoder(aType, NULL)) {
     nsRefPtr<nsMediaPluginDecoder> decoder = new nsMediaPluginDecoder(aType);
     if (decoder->Init(this)) {
       return decoder.forget();
@@ -2617,11 +2616,11 @@ void nsHTMLMediaElement::EndMediaStreamPlayback()
   VideoFrameContainer* container = GetVideoFrameContainer();
   if (container) {
     GetMediaStream()->RemoveVideoOutput(container);
+    container->GetImageContainer()->SetCurrentImage(nullptr);
   }
   if (mPaused) {
     GetMediaStream()->ChangeExplicitBlockerCount(-1);
   }
-  mVideoFrameContainer->GetImageContainer()->SetCurrentImage(nullptr);
   if (mPausedForInactiveDocument) {
     GetMediaStream()->ChangeExplicitBlockerCount(-1);
   }
@@ -2820,6 +2819,8 @@ void nsHTMLMediaElement::PlaybackEnded()
     SetCurrentTime(0);
     return;
   }
+
+  Pause();
 
   FireTimeUpdate(false);
   DispatchAsyncEvent(NS_LITERAL_STRING("ended"));

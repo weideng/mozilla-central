@@ -13,12 +13,12 @@
 #include "nsISupports.h"
 #include "nsCoord.h"
 #include "nsPresContext.h"
-#include "nsIFrame.h" // to get nsIBox, which is a typedef
 
 #define NS_DEFAULT_VERTICAL_SCROLL_DISTANCE 3
 
 class nsBoxLayoutState;
 class nsIScrollPositionListener;
+class nsIFrame;
 
 /**
  * Interface for frames that are scrollable. This interface exposes
@@ -139,6 +139,11 @@ public:
    */
   virtual void ScrollToCSSPixels(nsIntPoint aScrollPosition) = 0;
   /**
+   * Returns the scroll position in integer CSS pixels, rounded to the nearest
+   * pixel.
+   */
+  virtual nsIntPoint GetScrollPositionCSSPixels() = 0;
+  /**
    * When scrolling by a relative amount, we can choose various units.
    */
   enum ScrollUnit { DEVICE_PIXELS, LINES, PAGES, WHOLE };
@@ -179,7 +184,7 @@ public:
    * setting up a scrollbar mediator if you want to redirect scrollbar
    * input.
    */
-  virtual nsIBox* GetScrollbarBox(bool aVertical) = 0;
+  virtual nsIFrame* GetScrollbarBox(bool aVertical) = 0;
 
   /**
    * Internal method used by scrollbars to notify their scrolling

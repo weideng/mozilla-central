@@ -32,6 +32,7 @@
 #include "nsPrincipal.h"
 #include "mozilla/Attributes.h"
 #include "nsIScriptContext.h"
+#include "nsJSEnvironment.h"
 
 using namespace mozilla;
 using namespace js;
@@ -1401,11 +1402,10 @@ nsXPCComponents_Results::NewResolve(nsIXPConnectWrappedNative *wrapper,
         nsresult rv;
         while (nsXPCException::IterateNSResults(&rv, &rv_name, nullptr, &iter)) {
             if (!strcmp(name.ptr(), rv_name)) {
-                jsval val;
+                jsval val = JS_NumberValue((double)rv);
 
                 *objp = obj;
-                if (!JS_NewNumberValue(cx, (double)rv, &val) ||
-                    !JS_DefinePropertyById(cx, obj, id, val,
+                if (!JS_DefinePropertyById(cx, obj, id, val,
                                            nullptr, nullptr,
                                            JSPROP_ENUMERATE |
                                            JSPROP_READONLY |
@@ -3003,10 +3003,10 @@ static JSClass SandboxClass = {
 };
 
 static JSFunctionSpec SandboxFunctions[] = {
-    {"dump",    SandboxDump,    1,0},
-    {"debug",   SandboxDebug,   1,0},
-    {"importFunction", SandboxImport, 1,0},
-    {nullptr,nullptr,0,0}
+    JS_FS("dump",    SandboxDump,    1,0),
+    JS_FS("debug",   SandboxDebug,   1,0),
+    JS_FS("importFunction", SandboxImport, 1,0),
+    JS_FS_END
 };
 
 /***************************************************************************/
@@ -4049,6 +4049,14 @@ nsXPCComponents_Utils::ForceGC()
     return NS_OK;
 }
 
+/* void forceCC (); */
+NS_IMETHODIMP
+nsXPCComponents_Utils::ForceCC()
+{
+    nsJSContext::CycleCollectNow(nullptr, 0);
+    return NS_OK;
+}
+
 /* void forceShrinkingGC (); */
 NS_IMETHODIMP
 nsXPCComponents_Utils::ForceShrinkingGC()
@@ -4691,8 +4699,7 @@ nsXPCComponents::GetProperty(nsIXPConnectWrappedNative *wrapper,
 
     nsresult rv = NS_OK;
     if (doResult) {
-        if (!JS_NewNumberValue(cx, (double) res, vp))
-            return NS_ERROR_OUT_OF_MEMORY;
+        *vp = JS_NumberValue((double) res);
         rv = NS_SUCCESS_I_DID_SOMETHING;
     }
 

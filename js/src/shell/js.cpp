@@ -2181,10 +2181,8 @@ ZZ_formatter(JSContext *cx, const char *format, bool fromJS, jsval **vpp,
     } else {
         re = va_arg(ap, double);
         im = va_arg(ap, double);
-        if (!JS_NewNumberValue(cx, re, &vp[0]))
-            return false;
-        if (!JS_NewNumberValue(cx, im, &vp[1]))
-            return false;
+        vp[0] = JS_NumberValue(re);
+        vp[1] = JS_NumberValue(im);
     }
     *vpp = vp + 2;
     *app = ap;
@@ -2394,7 +2392,8 @@ ToInt32(JSContext *cx, unsigned argc, jsval *vp)
 
     if (!JS_ValueToInt32(cx, argc == 0 ? JSVAL_VOID : vp[2], &i))
         return false;
-    return JS_NewNumberValue(cx, i, vp);
+    *vp = JS_NumberValue(i);
+    return true;
 }
 
 static JSBool
@@ -2535,9 +2534,9 @@ NewSandbox(JSContext *cx, bool lazy)
 static JSBool
 EvalInContext(JSContext *cx, unsigned argc, jsval *vp)
 {
-    JSString *str;
+    RootedString str(cx);
     RootedObject sobj(cx);
-    if (!JS_ConvertArguments(cx, argc, JS_ARGV(cx, vp), "S / o", &str, sobj.address()))
+    if (!JS_ConvertArguments(cx, argc, JS_ARGV(cx, vp), "S / o", str.address(), sobj.address()))
         return false;
 
     size_t srclen;
@@ -2665,7 +2664,8 @@ ShapeOf(JSContext *cx, unsigned argc, JS::Value *vp)
         return false;
     }
     JSObject *obj = &v.toObject();
-    return JS_NewNumberValue(cx, (double) ((uintptr_t)obj->lastProperty() >> 3), vp);
+    *vp = JS_NumberValue((double) ((uintptr_t)obj->lastProperty() >> 3));
+    return true;
 }
 
 /*
@@ -3059,8 +3059,10 @@ SetTimeoutValue(JSContext *cx, double t)
 static JSBool
 Timeout(JSContext *cx, unsigned argc, jsval *vp)
 {
-    if (argc == 0)
-        return JS_NewNumberValue(cx, gTimeoutInterval, vp);
+    if (argc == 0) {
+        *vp = JS_NumberValue(gTimeoutInterval);
+        return true;
+    }
 
     if (argc > 1) {
         JS_ReportError(cx, "Wrong number of arguments");
@@ -3083,7 +3085,8 @@ Elapsed(JSContext *cx, unsigned argc, jsval *vp)
         JSShellContextData *data = GetContextData(cx);
         if (data)
             d = PRMJ_Now() - data->startTime;
-        return JS_NewNumberValue(cx, d, vp);
+        *vp = JS_NumberValue(d);
+        return true;
     }
     JS_ReportError(cx, "Wrong number of arguments");
     return false;
@@ -3370,6 +3373,29 @@ Wrap(JSContext *cx, unsigned argc, jsval *vp)
     JSObject *obj = JSVAL_TO_OBJECT(v);
     JSObject *wrapped = Wrapper::New(cx, obj, obj->getProto(), &obj->global(),
                                      &DirectWrapper::singleton);
+    if (!wrapped)
+        return false;
+
+    JS_SET_RVAL(cx, vp, OBJECT_TO_JSVAL(wrapped));
+    return true;
+}
+
+static JSBool
+WrapWithProto(JSContext *cx, unsigned argc, jsval *vp)
+{
+    Value obj = JSVAL_VOID, proto = JSVAL_VOID;
+    if (argc == 2) {
+        obj = JS_ARGV(cx, vp)[0];
+        proto = JS_ARGV(cx, vp)[1];
+    }
+    if (!obj.isObject() || !proto.isObjectOrNull()) {
+        JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_INVALID_ARGS,
+                             "wrapWithProto");
+    }
+
+    JSObject *wrapped = Wrapper::New(cx, &obj.toObject(), proto.toObjectOrNull(),
+                                     &obj.toObject().global(),
+                                     &DirectWrapper::singletonWithPrototype);
     if (!wrapped)
         return false;
 
@@ -3778,6 +3804,10 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 "wrap(obj)",
 "  Wrap an object into a noop wrapper."),
 
+    JS_FN_HELP("wrapWithProto", WrapWithProto, 2, 0,
+"wrap(obj)",
+"  Wrap an object into a noop wrapper with prototype semantics."),
+
     JS_FN_HELP("serialize", Serialize, 1, 0,
 "serialize(sd)",
 "  Serialize sd using JS_WriteStructuredClone. Returns a TypedArray."),
@@ -3814,7 +3844,7 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 "  rooting hazards. This is helpful to reduce the time taken when interpreting\n"
 "  heavily numeric code."),
 
-    JS_FS_END
+    JS_FS_HELP_END
 };
 #ifdef MOZ_PROFILING
 # define PROFILING_FUNCTION_COUNT 5
@@ -3877,7 +3907,7 @@ Help(JSContext *cx, unsigned argc, jsval *vp)
 
     RootedObject obj(cx);
     if (argc == 0) {
-        RootedObject global(cx, JS_GetGlobalObject(cx));
+        RootedObject global(cx, JS_GetGlobalForScopeChain(cx));
         AutoIdArray ida(cx, JS_Enumerate(cx, global));
         if (!ida)
             return false;
@@ -3886,15 +3916,23 @@ Help(JSContext *cx, unsigned argc, jsval *vp)
             jsval v;
             if (!JS_LookupPropertyById(cx, global, ida[i], &v))
                 return false;
+            if (JSVAL_IS_PRIMITIVE(v)) {
+                JS_ReportError(cx, "primitive arg");
+                return false;
+            }
             obj = JSVAL_TO_OBJECT(v);
-            if (!JSVAL_IS_PRIMITIVE(v) && !PrintHelp(cx, obj))
+            if (!PrintHelp(cx, obj))
                 return false;
         }
     } else {
         jsval *argv = JS_ARGV(cx, vp);
         for (unsigned i = 0; i < argc; i++) {
+            if (JSVAL_IS_PRIMITIVE(argv[i])) {
+                JS_ReportError(cx, "primitive arg");
+                return false;
+            }
             obj = JSVAL_TO_OBJECT(argv[i]);
-            if (!JSVAL_IS_PRIMITIVE(argv[i]) && !PrintHelp(cx, obj))
+            if (!PrintHelp(cx, obj))
                 return false;
         }
     }
@@ -3925,21 +3963,21 @@ static JSBool
 its_set_customNative(JSContext *cx, unsigned argc, jsval *vp);
 
 static JSPropertySpec its_props[] = {
-    {"color",           ITS_COLOR,      JSPROP_ENUMERATE,       NULL, NULL},
-    {"height",          ITS_HEIGHT,     JSPROP_ENUMERATE,       NULL, NULL},
-    {"width",           ITS_WIDTH,      JSPROP_ENUMERATE,       NULL, NULL},
-    {"funny",           ITS_FUNNY,      JSPROP_ENUMERATE,       NULL, NULL},
-    {"array",           ITS_ARRAY,      JSPROP_ENUMERATE,       NULL, NULL},
-    {"rdonly",          ITS_RDONLY,     JSPROP_READONLY,        NULL, NULL},
+    {"color",           ITS_COLOR,      JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
+    {"height",          ITS_HEIGHT,     JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
+    {"width",           ITS_WIDTH,      JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
+    {"funny",           ITS_FUNNY,      JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
+    {"array",           ITS_ARRAY,      JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
+    {"rdonly",          ITS_RDONLY,     JSPROP_READONLY,        JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
     {"custom",          ITS_CUSTOM,     JSPROP_ENUMERATE,
-                        its_getter,     its_setter},
+                        JSOP_WRAPPER(its_getter),     JSOP_WRAPPER(its_setter)},
     {"customRdOnly",    ITS_CUSTOMRDONLY, JSPROP_ENUMERATE | JSPROP_READONLY,
-                        its_getter,     its_setter},
+                        JSOP_WRAPPER(its_getter),     JSOP_WRAPPER(its_setter)},
     {"customNative",    ITS_CUSTOMNATIVE,
                         JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS,
-                        (JSPropertyOp)its_get_customNative,
-                        (JSStrictPropertyOp)its_set_customNative },
-    {NULL,0,0,NULL,NULL}
+                        JSOP_WRAPPER((JSPropertyOp)its_get_customNative),
+                        JSOP_WRAPPER((JSStrictPropertyOp)its_set_customNative)},
+    {NULL,0,0,JSOP_NULLWRAPPER, JSOP_NULLWRAPPER}
 };
 
 static JSBool its_noisy;    /* whether to be noisy when finalizing it */

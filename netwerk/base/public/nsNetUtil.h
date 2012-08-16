@@ -7,7 +7,7 @@
 #ifndef nsNetUtil_h__
 #define nsNetUtil_h__
 
-#include "nsNetError.h"
+#include "nsError.h"
 #include "nsNetCID.h"
 #include "nsStringGlue.h"
 #include "nsMemory.h"
@@ -639,7 +639,7 @@ NS_ImplementChannelOpen(nsIChannel      *channel,
     if (NS_SUCCEEDED(rv)) {
         rv = channel->AsyncOpen(listener, nullptr);
         if (NS_SUCCEEDED(rv)) {
-            PRUint32 n;
+            PRUint64 n;
             // block until the initial response is received or an error occurs.
             rv = stream->Available(&n);
             if (NS_SUCCEEDED(rv)) {
@@ -1253,9 +1253,12 @@ NS_LoadPersistentPropertiesFromURISpec(nsIPersistentProperties **result,
  * searches the channel's notificationCallbacks attribute, and if the interface
  * is not found there, then it inspects the notificationCallbacks attribute of
  * the channel's loadGroup.
+ *
+ * Note: templatized only because nsIWebSocketChannel is currently not an
+ * nsIChannel.
  */
-inline void
-NS_QueryNotificationCallbacks(nsIChannel   *channel,
+template <class T> inline void
+NS_QueryNotificationCallbacks(T            *channel,
                               const nsIID  &iid,
                               void        **result)
 {
@@ -1278,9 +1281,12 @@ NS_QueryNotificationCallbacks(nsIChannel   *channel,
     }
 }
 
-/* template helper */
-template <class T> inline void
-NS_QueryNotificationCallbacks(nsIChannel  *channel,
+// template helper:
+// Note: "class C" templatized only because nsIWebSocketChannel is currently not
+// an nsIChannel.
+
+template <class C, class T> inline void
+NS_QueryNotificationCallbacks(C           *channel,
                               nsCOMPtr<T> &result)
 {
     NS_QueryNotificationCallbacks(channel, NS_GET_TEMPLATE_IID(T),
@@ -1322,27 +1328,6 @@ NS_UsePrivateBrowsing(nsIChannel *channel)
     nsCOMPtr<nsILoadContext> loadContext;
     NS_QueryNotificationCallbacks(channel, loadContext);
     return loadContext && loadContext->UsePrivateBrowsing();
-}
-
-/**
- * Gets ExtendedOrigin value for given channel's nsILoadContext.
- * Returns false if error or channel's callbacks don't implement nsILoadContext.
- */
-inline bool
-NS_GetExtendedOrigin(nsIChannel *aChannel, nsACString &aResult)
-{
-    nsCOMPtr<nsILoadContext> loadContext;
-    NS_QueryNotificationCallbacks(aChannel, loadContext);
-    if (!loadContext) {
-        return false;
-    }
-    nsCOMPtr<nsIURI> uri;
-    nsresult rv = aChannel->GetURI(getter_AddRefs(uri));
-    NS_ENSURE_SUCCESS(rv, false);
-
-    rv = loadContext->GetExtendedOrigin(uri, aResult);
-    NS_ENSURE_SUCCESS(rv, false);
-    return true;
 }
 
 /**

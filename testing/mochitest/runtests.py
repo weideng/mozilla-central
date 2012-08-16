@@ -208,6 +208,12 @@ class MochitestOptions(optparse.OptionParser):
                            "This directory will be deleted after the tests are finished")
     defaults["profilePath"] = tempfile.mkdtemp()
 
+    self.add_option("--testing-modules-dir", action = "store",
+                    type = "string", dest = "testingModulesDir",
+                    help = "Directory where testing-only JS modules are "
+                           "located.")
+    defaults["testingModulesDir"] = None
+
     self.add_option("--use-vmware-recording",
                     action = "store_true", dest = "vmwareRecording",
                     help = "enables recording while the application is running "
@@ -323,6 +329,34 @@ See <http://mochikit.com/doc/html/MochiKit/Logging.html> for details on the logg
 
     if options.webapprtContent and options.webapprtChrome:
       self.error("Only one of --webapprt-content and --webapprt-chrome may be given.")
+
+    # Try to guess the testing modules directory.
+    # This somewhat grotesque hack allows the buildbot machines to find the
+    # modules directory without having to configure the buildbot hosts. This
+    # code should never be executed in local runs because the build system
+    # should always set the flag that populates this variable. If buildbot ever
+    # passes this argument, this code can be deleted.
+    if options.testingModulesDir is None:
+      possible = os.path.join(os.getcwd(), os.path.pardir, 'modules')
+
+      if os.path.isdir(possible):
+        options.testingModulesDir = possible
+
+    # Even if buildbot is updated, we still want this, as the path we pass in
+    # to the app must be absolute and have proper slashes.
+    if options.testingModulesDir is not None:
+      options.testingModulesDir = os.path.normpath(options.testingModulesDir)
+
+      if not os.path.isabs(options.testingModulesDir):
+        options.testingModulesDir = os.path.abspath(testingModulesDir)
+
+      if not os.path.isdir(options.testingModulesDir):
+        self.error('--testing-modules-dir not a directory: %s' %
+          options.testingModulesDir)
+
+      options.testingModulesDir = options.testingModulesDir.replace('\\', '/')
+      if options.testingModulesDir[-1] != '/':
+        options.testingModulesDir += '/'
 
     return options
 
@@ -597,7 +631,7 @@ class Mochitest(object):
         self.urlOpts.append("testname=%s" % ("/").join([self.TEST_PATH, options.testPath]))
       if options.testManifest:
         self.urlOpts.append("testManifest=%s" % options.testManifest)
-        if options.runOnly:
+        if hasattr(options, 'runOnly') and options.runOnly:
           self.urlOpts.append("runOnly=true")
         else:
           self.urlOpts.append("runOnly=false")
@@ -679,14 +713,6 @@ class Mochitest(object):
     else:
       timeout = 330.0 # default JS harness timeout is 300 seconds
 
-    # it's a debug build, we can parse leaked DOMWindows and docShells
-    # but skip for WebappRT chrome tests, where DOMWindow "leaks" aren't
-    # meaningful.  See https://bugzilla.mozilla.org/show_bug.cgi?id=733631#c46
-    if Automation.IS_DEBUG_BUILD and not options.webapprtChrome:
-      logger = ShutdownLeakLogger(self.automation.log)
-    else:
-      logger = None
-
     if options.vmwareRecording:
       self.startVMwareRecording(options);
 
@@ -700,7 +726,6 @@ class Mochitest(object):
                                   certPath=options.certPath,
                                   debuggerInfo=debuggerInfo,
                                   symbolsPath=options.symbolsPath,
-                                  logger = logger,
                                   timeout = timeout)
     except KeyboardInterrupt:
       self.automation.log.info("INFO | runtests.py | Received keyboard interrupt.\n");
@@ -715,9 +740,6 @@ class Mochitest(object):
     self.stopWebServer(options)
     self.stopWebSocketServer(options)
     processLeakLog(self.leak_report_file, options.leakThreshold)
-
-    if logger:
-      logger.parse()
 
     self.automation.log.info("\nINFO | runtests.py | Running tests: end.")
 
@@ -817,6 +839,10 @@ toolbar#nav-bar {
         if self.automation.IS_WIN32:
           chrometestDir = "file:///" + chrometestDir.replace("\\", "/")
         manifestFile.write("content mochitests %s contentaccessible=yes\n" % chrometestDir)
+
+      if options.testingModulesDir is not None:
+        manifestFile.write("resource testing-common file:///%s\n" %
+          options.testingModulesDir)
 
     # Call installChromeJar().
     jarDir = "mochijar"

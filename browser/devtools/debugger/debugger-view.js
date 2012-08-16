@@ -32,8 +32,11 @@ let DebuggerView = {
 
   /**
    * Initializes the SourceEditor instance.
+   *
+   * @param function aCallback
+   *        Called after the editor finishes initializing.
    */
-  initializeEditor: function DV_initializeEditor() {
+  initializeEditor: function DV_initializeEditor(aCallback) {
     let placeholder = document.getElementById("editor");
 
     let config = {
@@ -45,7 +48,10 @@ let DebuggerView = {
     };
 
     this.editor = new SourceEditor();
-    this.editor.init(placeholder, config, this._onEditorLoad.bind(this));
+    this.editor.init(placeholder, config, function() {
+      this._onEditorLoad();
+      aCallback();
+    }.bind(this));
   },
 
   /**
@@ -81,6 +87,7 @@ let DebuggerView = {
    */
   _onEditorLoad: function DV__onEditorLoad() {
     DebuggerController.Breakpoints.initialize();
+    this.editor.focus();
   },
 
   /**
@@ -239,6 +246,16 @@ ScriptsView.prototype = {
   },
 
   /**
+   * Selects the script with the specified index from the list.
+   *
+   * @param number aIndex
+   *        The script index.
+   */
+  selectIndex: function DVS_selectIndex(aIndex) {
+    this._scripts.selectedIndex = aIndex;
+  },
+
+  /**
    * Selects the script with the specified URL from the list.
    *
    * @param string aUrl
@@ -275,6 +292,13 @@ ScriptsView.prototype = {
     return this._scripts.selectedItem ?
            this._scripts.selectedItem.value : null;
   },
+
+  /**
+   * Gets the most recently selected script url.
+   * @return string | null
+   */
+  get preferredScriptUrl()
+    this._preferredScriptUrl ? this._preferredScriptUrl : null,
 
   /**
    * Returns the list of labels in the scripts container.
@@ -344,7 +368,7 @@ ScriptsView.prototype = {
       }
     }
     // The script is alphabetically the last one.
-    this._createScriptElement(aLabel, aScript, -1, true);
+    this._createScriptElement(aLabel, aScript, -1);
   },
 
   /**
@@ -364,7 +388,7 @@ ScriptsView.prototype = {
 
     for (let i = 0, l = newScripts.length; i < l; i++) {
       let item = newScripts[i];
-      this._createScriptElement(item.label, item.script, -1, true);
+      this._createScriptElement(item.label, item.script, -1);
     }
   },
 
@@ -379,12 +403,8 @@ ScriptsView.prototype = {
    * @param number aIndex
    *        The index where to insert to new script in the container.
    *        Pass -1 to append the script at the end.
-   * @param boolean aSelectIfEmptyFlag
-   *        True to set the newly created script as the currently selected item
-   *        if there are no other existing scripts in the container.
    */
-  _createScriptElement: function DVS__createScriptElement(
-    aLabel, aScript, aIndex, aSelectIfEmptyFlag)
+  _createScriptElement: function DVS__createScriptElement(aLabel, aScript, aIndex)
   {
     // Make sure we don't duplicate anything.
     if (aLabel == "null" || this.containsLabel(aLabel) || this.contains(aScript.url)) {
@@ -397,10 +417,6 @@ ScriptsView.prototype = {
 
     scriptItem.setAttribute("tooltiptext", aScript.url);
     scriptItem.setUserData("sourceScript", aScript, null);
-
-    if (this._scripts.itemCount == 1 && aSelectIfEmptyFlag) {
-      this._scripts.selectedItem = scriptItem;
-    }
   },
 
   /**
@@ -436,6 +452,7 @@ ScriptsView.prototype = {
     }
 
     this._preferredScript = selectedItem;
+    this._preferredScriptUrl = selectedItem.value;
     this._scripts.setAttribute("tooltiptext", selectedItem.value);
     DebuggerController.SourceScripts.showScript(selectedItem.getUserData("sourceScript"));
   },
@@ -463,7 +480,7 @@ ScriptsView.prototype = {
       for (let i = 0, l = scripts.itemCount; i < l; i++) {
         scripts.getItemAtIndex(i).hidden = false;
       }
-    } else {
+    } else if (this._prevSearchedFile !== file) {
       let found = false;
 
       for (let i = 0, l = scripts.itemCount; i < l; i++) {
@@ -491,15 +508,18 @@ ScriptsView.prototype = {
         scripts.removeAttribute("tooltiptext");
       }
     }
-    if (line > -1) {
+    if (this._prevSearchedLine !== line && line > -1) {
       editor.setCaretPosition(line - 1);
     }
-    if (token.length) {
+    if (this._prevSearchedToken !== token && token.length > 0) {
       let offset = editor.find(token, { ignoreCase: true });
       if (offset > -1) {
         editor.setSelection(offset, offset + token.length)
       }
     }
+    this._prevSearchedFile = file;
+    this._prevSearchedLine = line;
+    this._prevSearchedToken = token;
   },
 
   /**
@@ -523,6 +543,22 @@ ScriptsView.prototype = {
         editor.setSelection(offset, offset + token.length)
       }
     }
+  },
+
+  /**
+   * Called when the scripts filter key sequence was pressed.
+   */
+  _onSearch: function DVS__onSearch() {
+    this._searchbox.focus();
+    this._searchbox.value = "";
+  },
+
+  /**
+   * Called when the scripts token filter key sequence was pressed.
+   */
+  _onTokenSearch: function DVS__onTokenSearch() {
+    this._searchbox.focus();
+    this._searchbox.value = "#";
   },
 
   /**
@@ -566,10 +602,10 @@ function StackFramesView() {
   this._onFramesScroll = this._onFramesScroll.bind(this);
   this._onPauseExceptionsClick = this._onPauseExceptionsClick.bind(this);
   this._onCloseButtonClick = this._onCloseButtonClick.bind(this);
-  this._onResumeButtonClick = this._onResumeButtonClick.bind(this);
-  this._onStepOverClick = this._onStepOverClick.bind(this);
-  this._onStepInClick = this._onStepInClick.bind(this);
-  this._onStepOutClick = this._onStepOutClick.bind(this);
+  this._onResume = this._onResume.bind(this);
+  this._onStepOver = this._onStepOver.bind(this);
+  this._onStepIn = this._onStepIn.bind(this);
+  this._onStepOut = this._onStepOut.bind(this);
 }
 
 StackFramesView.prototype = {
@@ -777,7 +813,7 @@ StackFramesView.prototype = {
   /**
    * Listener handling the pause/resume button click event.
    */
-  _onResumeButtonClick: function DVF__onResumeButtonClick() {
+  _onResume: function DVF__onResume(e) {
     if (DebuggerController.activeThread.paused) {
       DebuggerController.activeThread.resume();
     } else {
@@ -788,22 +824,28 @@ StackFramesView.prototype = {
   /**
    * Listener handling the step over button click event.
    */
-  _onStepOverClick: function DVF__onStepOverClick() {
-    DebuggerController.activeThread.stepOver();
+  _onStepOver: function DVF__onStepOver(e) {
+    if (DebuggerController.activeThread.paused) {
+      DebuggerController.activeThread.stepOver();
+    }
   },
 
   /**
    * Listener handling the step in button click event.
    */
-  _onStepInClick: function DVF__onStepInClick() {
-    DebuggerController.activeThread.stepIn();
+  _onStepIn: function DVF__onStepIn(e) {
+    if (DebuggerController.activeThread.paused) {
+      DebuggerController.activeThread.stepIn();
+    }
   },
 
   /**
    * Listener handling the step out button click event.
    */
-  _onStepOutClick: function DVF__onStepOutClick() {
-    DebuggerController.activeThread.stepOut();
+  _onStepOut: function DVF__onStepOut(e) {
+    if (DebuggerController.activeThread.paused) {
+      DebuggerController.activeThread.stepOut();
+    }
   },
 
   /**
@@ -830,13 +872,11 @@ StackFramesView.prototype = {
 
     close.addEventListener("click", this._onCloseButtonClick, false);
     pauseOnExceptions.checked = DebuggerController.StackFrames.pauseOnExceptions;
-    pauseOnExceptions.addEventListener("click",
-                                        this._onPauseExceptionsClick,
-                                        false);
-    resume.addEventListener("click", this._onResumeButtonClick, false);
-    stepOver.addEventListener("click", this._onStepOverClick, false);
-    stepIn.addEventListener("click", this._onStepInClick, false);
-    stepOut.addEventListener("click", this._onStepOutClick, false);
+    pauseOnExceptions.addEventListener("click", this._onPauseExceptionsClick, false);
+    resume.addEventListener("click", this._onResume, false);
+    stepOver.addEventListener("click", this._onStepOver, false);
+    stepIn.addEventListener("click", this._onStepIn, false);
+    stepOut.addEventListener("click", this._onStepOut, false);
     frames.addEventListener("click", this._onFramesClick, false);
     frames.addEventListener("scroll", this._onFramesScroll, false);
     window.addEventListener("resize", this._onFramesScroll, false);
@@ -858,13 +898,11 @@ StackFramesView.prototype = {
     let frames = this._frames;
 
     close.removeEventListener("click", this._onCloseButtonClick, false);
-    pauseOnExceptions.removeEventListener("click",
-                                          this._onPauseExceptionsClick,
-                                          false);
-    resume.removeEventListener("click", this._onResumeButtonClick, false);
-    stepOver.removeEventListener("click", this._onStepOverClick, false);
-    stepIn.removeEventListener("click", this._onStepInClick, false);
-    stepOut.removeEventListener("click", this._onStepOutClick, false);
+    pauseOnExceptions.removeEventListener("click", this._onPauseExceptionsClick, false);
+    resume.removeEventListener("click", this._onResume, false);
+    stepOver.removeEventListener("click", this._onStepOver, false);
+    stepIn.removeEventListener("click", this._onStepIn, false);
+    stepOut.removeEventListener("click", this._onStepOut, false);
     frames.removeEventListener("click", this._onFramesClick, false);
     frames.removeEventListener("scroll", this._onFramesScroll, false);
     window.removeEventListener("resize", this._onFramesScroll, false);

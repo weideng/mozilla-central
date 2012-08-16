@@ -209,7 +209,6 @@ nsDisplayCanvasBackground::Paint(nsDisplayListBuilder* aBuilder,
 
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
-  nsIntRect pixelRect = bounds.ToOutsidePixels(mFrame->PresContext()->AppUnitsPerDevPixel());
   nsRenderingContext context;
   nsRefPtr<gfxContext> dest = aCtx->ThebesContext();
   nsRefPtr<gfxASurface> surf;
@@ -572,7 +571,7 @@ nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
   return NS_OK;
 }
 
-PRIntn
+int
 nsCanvasFrame::GetSkipSides() const
 {
   return 0;

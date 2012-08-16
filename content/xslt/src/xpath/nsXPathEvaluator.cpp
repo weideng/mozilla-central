@@ -13,27 +13,24 @@
 #include "nsContentCID.h"
 #include "txExpr.h"
 #include "txExprParser.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "txURIUtils.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsDOMString.h"
 #include "nsINameSpaceManager.h"
-#include "txError.h"
 #include "nsContentUtils.h"
 
 // txIParseContext implementation
 class nsXPathEvaluatorParseContext : public txIParseContext
 {
 public:
-    nsXPathEvaluatorParseContext(nsXPathEvaluator &aEvaluator,
-                                 nsIDOMXPathNSResolver* aResolver,
+    nsXPathEvaluatorParseContext(nsIDOMXPathNSResolver* aResolver,
                                  nsTArray<PRInt32> *aNamespaceIDs,
                                  nsTArray<nsCString> *aContractIDs,
                                  nsCOMArray<nsISupports> *aState,
                                  bool aIsCaseSensitive)
-        : mEvaluator(aEvaluator),
-          mResolver(aResolver),
+        : mResolver(aResolver),
           mNamespaceIDs(aNamespaceIDs),
           mContractIDs(aContractIDs),
           mState(aState),
@@ -57,7 +54,6 @@ public:
     void SetErrorOffset(PRUint32 aOffset);
 
 private:
-    nsXPathEvaluator &mEvaluator;
     nsIDOMXPathNSResolver* mResolver;
     nsTArray<PRInt32> *mNamespaceIDs;
     nsTArray<nsCString> *mContractIDs;
@@ -191,7 +187,7 @@ nsXPathEvaluator::CreateExpression(const nsAString & aExpression,
     }
 
     nsCOMPtr<nsIDocument> doc = do_QueryReferent(mDocument);
-    nsXPathEvaluatorParseContext pContext(*this, aResolver, aNamespaceIDs,
+    nsXPathEvaluatorParseContext pContext(aResolver, aNamespaceIDs,
                                           aContractIDs, aState,
                                           !(doc && doc->IsHTML()));
 

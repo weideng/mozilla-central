@@ -113,7 +113,7 @@ let SocialUI = {
 
     // Check that the associated document's origin is in our whitelist
     let prePath = targetDoc.documentURIObject.prePath;
-    let whitelist = Services.prefs.getCharPref("browser.social.whitelist");
+    let whitelist = Services.prefs.getCharPref("social.activation.whitelist");
     if (whitelist.split(",").indexOf(prePath) == -1)
       return;
 
@@ -160,10 +160,10 @@ let SocialShareButton = {
   updateProfileInfo: function SSB_updateProfileInfo() {
     let profileRow = document.getElementById("editSharePopupHeader");
     let profile = Social.provider.profile;
-    if (profile && profile.portrait && profile.displayName) {
+    if (profile && profile.displayName) {
       profileRow.hidden = false;
       let portrait = document.getElementById("socialUserPortrait");
-      portrait.style.listStyleImage = profile.portrait;
+      portrait.setAttribute("src", profile.portrait || "chrome://browser/skin/social/social.png");
       let displayName = document.getElementById("socialUserDisplayName");
       displayName.setAttribute("label", profile.displayName);
     } else {
@@ -406,6 +406,13 @@ var SocialSidebar = {
     return Services.prefs.getBoolPref("social.sidebar.open");
   },
 
+  dispatchEvent: function(aType, aDetail) {
+    let sbrowser = document.getElementById("social-sidebar-browser");
+    let evt = sbrowser.contentDocument.createEvent("CustomEvent");
+    evt.initCustomEvent(aType, true, true, aDetail ? aDetail : {});
+    sbrowser.contentDocument.documentElement.dispatchEvent(evt);
+  },
+
   updateSidebar: function SocialSidebar_updateSidebar() {
     // Hide the toggle menu item if the sidebar cannot appear
     let command = document.getElementById("Social:ToggleSidebar");
@@ -418,17 +425,29 @@ var SocialSidebar = {
     broadcaster.hidden = hideSidebar;
     command.setAttribute("checked", !hideSidebar);
 
-    // If the sidebar is hidden, unload its document
-    // XXX this results in a poor UX, we should revisit
     let sbrowser = document.getElementById("social-sidebar-browser");
-    if (broadcaster.hidden) {
-      sbrowser.removeAttribute("origin");
-      sbrowser.setAttribute("src", "about:blank");
-      return;
+    if (hideSidebar) {
+      this.dispatchEvent("sidebarhide");
+      // If we're disabled, unload the sidebar content
+      if (!this.canShow) {
+        sbrowser.removeAttribute("origin");
+        sbrowser.setAttribute("src", "about:blank");
+      }
+    } else {
+      // Make sure the right sidebar URL is loaded
+      if (sbrowser.getAttribute("origin") != Social.provider.origin) {
+        sbrowser.setAttribute("origin", Social.provider.origin);
+        sbrowser.setAttribute("src", Social.provider.sidebarURL);
+        sbrowser.addEventListener("load", function sidebarOnShow() {
+          sbrowser.removeEventListener("load", sidebarOnShow);
+          // let load finish, then fire our event
+          setTimeout(function () {
+            SocialSidebar.dispatchEvent("sidebarshow");
+          }, 0);
+        });
+      } else {
+        this.dispatchEvent("sidebarshow");
+      }
     }
-
-    // Load the sidebar document
-    sbrowser.setAttribute("origin", Social.provider.origin);
-    sbrowser.setAttribute("src", Social.provider.sidebarURL);
   }
 }

@@ -28,9 +28,8 @@
 #include "nsCSSRendering.h"
 #include "nsTransform2D.h"
 #include "nsRegion.h"
-#include "nsLayoutErrors.h"
+#include "nsError.h"
 #include "nsDisplayList.h"
-#include "nsContentErrors.h"
 #include "nsListControlFrame.h"
 #include "nsIBaseWindow.h"
 #include "nsThemeConstants.h"
@@ -774,7 +773,7 @@ nsContainerFrame::SyncFrameViewProperties(nsPresContext*  aPresContext,
 
   // See if the frame is being relatively positioned or absolutely
   // positioned
-  bool isPositioned = aStyleContext->GetStyleDisplay()->IsPositioned();
+  bool isPositioned = aFrame->IsPositioned();
 
   PRInt32 zIndex = 0;
   bool    autoZIndex = false;

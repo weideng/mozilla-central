@@ -44,7 +44,7 @@
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsINameSpaceManager.h"
-#include "nsDOMError.h"
+#include "nsError.h"
 #include "nsScriptLoader.h"
 #include "nsRuleData.h"
 
@@ -53,12 +53,12 @@
 
 #include "nsHTMLParts.h"
 #include "nsContentUtils.h"
+#include "mozilla/dom/DirectionalityUtils.h"
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsGkAtoms.h"
 #include "nsEventStateManager.h"
 #include "nsIDOMEvent.h"
-#include "nsIDOMNSEvent.h"
 #include "nsDOMCSSDeclaration.h"
 #include "nsITextControlFrame.h"
 #include "nsIForm.h"
@@ -97,6 +97,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::directionality;
 
 class nsINodeInfo;
 class nsIDOMNodeList;
@@ -488,16 +489,15 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect, nsIContent** aOffsetParent)
     parent = frame;
   }
   else {
-    const bool isPositioned = frame->GetStyleDisplay()->IsPositioned();
-    const bool isAbsolutelyPositioned =
-      frame->GetStyleDisplay()->IsAbsolutelyPositioned();
+    const bool isPositioned = frame->IsPositioned();
+    const bool isAbsolutelyPositioned = frame->IsAbsolutelyPositioned();
     origin += frame->GetPositionIgnoringScrolling();
 
     for ( ; parent ; parent = parent->GetParent()) {
       content = parent->GetContent();
 
       // Stop at the first ancestor that is positioned.
-      if (parent->GetStyleDisplay()->IsPositioned()) {
+      if (parent->IsPositioned()) {
         *aOffsetParent = content;
         NS_IF_ADDREF(*aOffsetParent);
         break;
@@ -1689,6 +1689,24 @@ nsGenericHTMLElement::UpdateEditableState(bool aNotify)
   nsStyledElement::UpdateEditableState(aNotify);
 }
 
+nsEventStates
+nsGenericHTMLElement::IntrinsicState() const
+{
+  nsEventStates state = nsGenericHTMLElementBase::IntrinsicState();
+
+  if (GetDirectionality() == eDir_RTL) {
+    state |= NS_EVENT_STATE_RTL;
+    state &= ~NS_EVENT_STATE_LTR;
+  } else { // at least for HTML, directionality is exclusively LTR or RTL
+    NS_ASSERTION(GetDirectionality() == eDir_LTR,
+                 "HTML element's directionality must be either RTL or LTR");
+    state |= NS_EVENT_STATE_LTR;
+    state &= ~NS_EVENT_STATE_RTL;
+  }
+
+  return state;
+}
+
 nsresult
 nsGenericHTMLElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                                  nsIContent* aBindingParent,
@@ -1890,6 +1908,20 @@ nsGenericHTMLElement::AfterSetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
     }
     else if (aNotify && aName == nsGkAtoms::spellcheck) {
       SyncEditorsOnSubtree(this);
+    }
+    else if (aName == nsGkAtoms::dir) {
+      Directionality dir;
+      if (aValue &&
+          (aValue->Equals(nsGkAtoms::ltr, eIgnoreCase) ||
+           aValue->Equals(nsGkAtoms::rtl, eIgnoreCase))) {
+        SetHasValidDir();
+        dir = aValue->Equals(nsGkAtoms::rtl, eIgnoreCase) ? eDir_RTL : eDir_LTR;
+        SetDirectionality(dir, aNotify);
+      } else {
+        ClearHasValidDir();
+        dir = RecomputeDirectionality(this, aNotify);
+      }
+      SetDirectionalityOnDescendants(this, dir, aNotify);
     }
   }
 

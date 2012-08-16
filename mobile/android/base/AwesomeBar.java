@@ -6,6 +6,8 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.db.BrowserContract.Bookmarks;
+import org.mozilla.gecko.util.GeckoAsyncTask;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -57,6 +59,7 @@ public class AwesomeBar extends GeckoActivity {
     static final String TARGET_KEY = "target";
     static final String SEARCH_KEY = "search";
     static final String USER_ENTERED_KEY = "user_entered";
+    static final String READING_LIST_KEY = "reading_list";
     static enum Target { NEW_TAB, CURRENT_TAB };
 
     private String mTarget;
@@ -232,6 +235,13 @@ public class AwesomeBar extends GeckoActivity {
                 }
             }
         });
+
+        boolean showReadingList = intent.getBooleanExtra(READING_LIST_KEY, false);
+        if (showReadingList) {
+            BookmarksTab bookmarksTab = mAwesomeTabs.getBookmarksTab();
+            bookmarksTab.setShowReadingList(true);
+            mAwesomeTabs.setCurrentTabByTag(bookmarksTab.getTag());
+        }
     }
 
     @Override
@@ -309,12 +319,15 @@ public class AwesomeBar extends GeckoActivity {
         mGoButton.setVisibility(View.VISIBLE);
 
         int imageResource = R.drawable.ic_awesomebar_go;
+        String contentDescription = getString(R.string.go);
         int imeAction = EditorInfo.IME_ACTION_GO;
         if (isSearchUrl(text)) {
             imageResource = R.drawable.ic_awesomebar_search;
+            contentDescription = getString(R.string.search);
             imeAction = EditorInfo.IME_ACTION_SEARCH;
         }
         mGoButton.setImageResource(imageResource);
+        mGoButton.setContentDescription(contentDescription);
 
         int actionBits = mText.getImeOptions() & EditorInfo.IME_MASK_ACTION;
         if (actionBits != imeAction) {
@@ -511,7 +524,7 @@ public class AwesomeBar extends GeckoActivity {
 
                 editPrompt.setPositiveButton(R.string.button_ok, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int whichButton) {
-                        (new GeckoAsyncTask<Void, Void, Void>() {
+                        (new GeckoAsyncTask<Void, Void, Void>(GeckoApp.mAppContext, GeckoAppShell.getHandler()) {
                             @Override
                             public Void doInBackground(Void... params) {
                                 String newUrl = locationText.getText().toString().trim();
@@ -587,7 +600,7 @@ public class AwesomeBar extends GeckoActivity {
                 break;
             }
             case R.id.remove_history: {
-                (new GeckoAsyncTask<Void, Void, Void>() {
+                (new GeckoAsyncTask<Void, Void, Void>(GeckoApp.mAppContext, GeckoAppShell.getHandler()) {
                     @Override
                     public Void doInBackground(Void... params) {
                         BrowserDB.removeHistoryEntry(mResolver, id);

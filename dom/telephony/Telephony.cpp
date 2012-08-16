@@ -11,7 +11,7 @@
 #include "nsPIDOMWindow.h"
 
 #include "jsapi.h"
-#include "mozilla/Preferences.h"
+#include "nsIPermissionManager.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentUtils.h"
 #include "nsDOMClassInfo.h"
@@ -26,9 +26,6 @@
 
 USING_TELEPHONY_NAMESPACE
 using namespace mozilla::dom::gonk;
-using mozilla::Preferences;
-
-#define DOM_TELEPHONY_APP_PHONE_URL_PREF "dom.telephony.app.phone.url"
 
 namespace {
 
@@ -57,17 +54,17 @@ nsTArrayToJSArray(JSContext* aCx, JSObject* aGlobal,
   if (aSourceArray.IsEmpty()) {
     arrayObj = JS_NewArrayObject(aCx, 0, nullptr);
   } else {
-    nsTArray<jsval> valArray;
-    valArray.SetLength(aSourceArray.Length());
-
-    for (PRUint32 index = 0; index < valArray.Length(); index++) {
+    uint32_t valLength = aSourceArray.Length();
+    mozilla::ScopedDeleteArray<jsval> valArray(new jsval[valLength]);
+    JS::AutoArrayRooter tvr(aCx, valLength, valArray);
+    for (PRUint32 index = 0; index < valLength; index++) {
       nsISupports* obj = aSourceArray[index]->ToISupports();
       nsresult rv =
         nsContentUtils::WrapNative(aCx, aGlobal, obj, &valArray[index]);
       NS_ENSURE_SUCCESS(rv, rv);
     }
 
-    arrayObj = JS_NewArrayObject(aCx, valArray.Length(), valArray.Elements());
+    arrayObj = JS_NewArrayObject(aCx, valLength, valArray);
   }
 
   if (!arrayObj) {
@@ -547,15 +544,24 @@ NS_NewTelephony(nsPIDOMWindow* aWindow, nsIDOMTelephony** aTelephony)
     aWindow :
     aWindow->GetCurrentInnerWindow();
 
+  // Need the document for security check.
+  nsCOMPtr<nsIDocument> document =
+    do_QueryInterface(innerWindow->GetExtantDocument());
+  NS_ENSURE_TRUE(document, NS_NOINTERFACE);
 
-  bool allowed;
+  nsCOMPtr<nsIPrincipal> principal = document->NodePrincipal();
+  NS_ENSURE_TRUE(principal, NS_ERROR_UNEXPECTED);
+
+  nsCOMPtr<nsIPermissionManager> permMgr =
+    do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+  NS_ENSURE_TRUE(permMgr, NS_ERROR_UNEXPECTED);
+
+  PRUint32 permission;
   nsresult rv =
-    nsContentUtils::IsOnPrefWhitelist(innerWindow,
-                                      DOM_TELEPHONY_APP_PHONE_URL_PREF,
-                                      &allowed);
+    permMgr->TestPermissionFromPrincipal(principal, "telephony", &permission);
   NS_ENSURE_SUCCESS(rv, rv);
-  
-  if (!allowed) {
+
+  if (permission != nsIPermissionManager::ALLOW_ACTION) {
     *aTelephony = nullptr;
     return NS_OK;
   }

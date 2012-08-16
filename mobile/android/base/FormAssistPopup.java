@@ -6,6 +6,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.FloatSize;
+import org.mozilla.gecko.util.GeckoEventListener;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -70,15 +71,15 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
 
         setFocusable(false);
 
-        GeckoAppShell.registerGeckoEventListener("FormAssist:AutoComplete", this);
-        GeckoAppShell.registerGeckoEventListener("FormAssist:ValidationMessage", this);
-        GeckoAppShell.registerGeckoEventListener("FormAssist:Hide", this);
+        registerEventListener("FormAssist:AutoComplete");
+        registerEventListener("FormAssist:ValidationMessage");
+        registerEventListener("FormAssist:Hide");
     }
 
     void destroy() {
-        GeckoAppShell.unregisterGeckoEventListener("FormAssist:AutoComplete", this);
-        GeckoAppShell.unregisterGeckoEventListener("FormAssist:ValidationMessage", this);
-        GeckoAppShell.unregisterGeckoEventListener("FormAssist:Hide", this);
+        unregisterEventListener("FormAssist:AutoComplete");
+        unregisterEventListener("FormAssist:ValidationMessage");
+        unregisterEventListener("FormAssist:Hide");
     }
 
     public void handleMessage(String event, JSONObject message) {
@@ -222,7 +223,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
         int popupWidth = RelativeLayout.LayoutParams.FILL_PARENT;
         int popupLeft = left < 0 ? 0 : left;
 
-        FloatSize viewport = GeckoApp.mAppContext.getLayerController().getViewportSize();
+        FloatSize viewport = GeckoApp.mAppContext.getLayerClient().getViewportSize();
 
         // For autocomplete suggestions, if the input is smaller than the screen-width,
         // shrink the popup's width. Otherwise, keep it as FILL_PARENT.
@@ -345,5 +346,13 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
 
             return convertView;
         }
+    }
+
+    private void registerEventListener(String event) {
+        GeckoAppShell.getEventDispatcher().registerEventListener(event, this);
+    }
+
+    private void unregisterEventListener(String event) {
+        GeckoAppShell.getEventDispatcher().unregisterEventListener(event, this);
     }
 }

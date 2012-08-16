@@ -12,6 +12,7 @@ const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource:///modules/SignInToWebsite.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
                                   "resource://gre/modules/AddonManager.jsm");
@@ -25,7 +26,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "BookmarkHTMLUtils",
                                   "resource://gre/modules/BookmarkHTMLUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "webappsUI", 
+XPCOMUtils.defineLazyModuleGetter(this, "webappsUI",
                                   "resource:///modules/webappsUI.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
@@ -308,6 +309,7 @@ BrowserGlue.prototype = {
     if (this._isPlacesShutdownObserver)
       os.removeObserver(this, "places-shutdown");
     webappsUI.uninit();
+    SignInToWebsiteUX.uninit();
   },
 
   _onAppDefaults: function BG__onAppDefaults() {
@@ -336,6 +338,8 @@ BrowserGlue.prototype = {
     webappsUI.init();
 
     PageThumbs.init();
+
+    SignInToWebsiteUX.init();
 
     PdfJs.init();
 
@@ -1560,13 +1564,14 @@ ContentPermissionPrompt.prototype = {
         return;
     }
 
-    var requestingURI = request.uri;
+    var requestingPrincipal = request.principal;
+    var requestingURI = requestingPrincipal.URI;
 
     // Ignore requests from non-nsIStandardURLs
     if (!(requestingURI instanceof Ci.nsIStandardURL))
       return;
 
-    var result = Services.perms.testExactPermission(requestingURI, "geo");
+    var result = Services.perms.testExactPermissionFromPrincipal(requestingPrincipal, "geo");
 
     if (result == Ci.nsIPermissionManager.ALLOW_ACTION) {
       request.allow();
@@ -1619,7 +1624,7 @@ ContentPermissionPrompt.prototype = {
           label: browserBundle.GetStringFromName("geolocation.alwaysShareLocation"),
           accessKey: browserBundle.GetStringFromName("geolocation.alwaysShareLocation.accesskey"),
           callback: function () {
-            Services.perms.add(requestingURI, "geo", Ci.nsIPermissionManager.ALLOW_ACTION);
+            Services.perms.addFromPrincipal(requestingPrincipal, "geo", Ci.nsIPermissionManager.ALLOW_ACTION);
             request.allow();
           }
         });
@@ -1627,7 +1632,7 @@ ContentPermissionPrompt.prototype = {
           label: browserBundle.GetStringFromName("geolocation.neverShareLocation"),
           accessKey: browserBundle.GetStringFromName("geolocation.neverShareLocation.accesskey"),
           callback: function () {
-            Services.perms.add(requestingURI, "geo", Ci.nsIPermissionManager.DENY_ACTION);
+            Services.perms.addFromPrincipal(requestingPrincipal, "geo", Ci.nsIPermissionManager.DENY_ACTION);
             request.cancel();
           }
         });

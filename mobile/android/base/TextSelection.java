@@ -4,10 +4,12 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.gfx.Layer.RenderContext;
-import org.mozilla.gecko.gfx.LayerController;
+import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.FloatUtils;
+import org.mozilla.gecko.util.GeckoEventListener;
 
 import org.json.JSONObject;
 
@@ -19,29 +21,32 @@ class TextSelection extends Layer implements GeckoEventListener {
 
     private final TextSelectionHandle mStartHandle;
     private final TextSelectionHandle mEndHandle;
+    private final EventDispatcher mEventDispatcher;
 
     private float mViewLeft;
     private float mViewTop;
     private float mViewZoom;
 
-    TextSelection(TextSelectionHandle startHandle, TextSelectionHandle endHandle) {
+    TextSelection(TextSelectionHandle startHandle, TextSelectionHandle endHandle,
+                  EventDispatcher eventDispatcher) {
         mStartHandle = startHandle;
         mEndHandle = endHandle;
+        mEventDispatcher = eventDispatcher;
 
         // Only register listeners if we have valid start/end handles
         if (mStartHandle == null || mEndHandle == null) {
             Log.e(LOGTAG, "Failed to initialize text selection because at least one handle is null");
         } else {
-            GeckoAppShell.registerGeckoEventListener("TextSelection:ShowHandles", this);
-            GeckoAppShell.registerGeckoEventListener("TextSelection:HideHandles", this);
-            GeckoAppShell.registerGeckoEventListener("TextSelection:PositionHandles", this);
+            registerEventListener("TextSelection:ShowHandles");
+            registerEventListener("TextSelection:HideHandles");
+            registerEventListener("TextSelection:PositionHandles");
         }
     }
 
     void destroy() {
-        GeckoAppShell.unregisterGeckoEventListener("TextSelection:ShowHandles", this);
-        GeckoAppShell.unregisterGeckoEventListener("TextSelection:HideHandles", this);
-        GeckoAppShell.unregisterGeckoEventListener("TextSelection:PositionHandles", this);
+        unregisterEventListener("TextSelection:ShowHandles");
+        unregisterEventListener("TextSelection:HideHandles");
+        unregisterEventListener("TextSelection:PositionHandles");
     }
 
     public void handleMessage(String event, JSONObject message) {
@@ -55,18 +60,18 @@ class TextSelection extends Layer implements GeckoEventListener {
                         mViewLeft = 0.0f;
                         mViewTop = 0.0f;
                         mViewZoom = 0.0f;
-                        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-                        if (layerController != null) {
-                            layerController.getView().addLayer(TextSelection.this);
+                        GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+                        if (layerClient != null) {
+                            layerClient.getView().addLayer(TextSelection.this);
                         }
                     }
                 });
             } else if (event.equals("TextSelection:HideHandles")) {
                 GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
                     public void run() {
-                        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-                        if (layerController != null) {
-                            layerController.getView().removeLayer(TextSelection.this);
+                        GeckoLayerClient layerClient = GeckoApp.mAppContext.getLayerClient();
+                        if (layerClient != null) {
+                            layerClient.getView().removeLayer(TextSelection.this);
                         }
 
                         mStartHandle.setVisibility(View.GONE);
@@ -111,5 +116,13 @@ class TextSelection extends Layer implements GeckoEventListener {
                 mEndHandle.repositionWithViewport(context.viewport.left, context.viewport.top, context.zoomFactor);
             }
         });
+    }
+
+    private void registerEventListener(String event) {
+        mEventDispatcher.registerEventListener(event, this);
+    }
+
+    private void unregisterEventListener(String event) {
+        mEventDispatcher.unregisterEventListener(event, this);
     }
 }

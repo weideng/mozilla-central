@@ -33,7 +33,6 @@
 #include "nsITableCellLayout.h" // For efficient access to table cell
 #include "nsITableEditor.h"
 #include "nsITableLayout.h"     //  data owned by the table and cell frames
-#include "nsLayoutErrors.h"
 #include "nsLiteralString.h"
 #include "nsQueryFrame.h"
 #include "nsString.h"
@@ -424,7 +423,7 @@ nsHTMLEditor::InsertTableColumn(PRInt32 aNumber, bool aAfter)
 
   nsAutoEditBatch beginBatching(this);
   // Prevent auto insertion of BR in new cell until we're done
-  nsAutoRules beginRulesSniffing(this, kOpInsertNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
 
   // Use column after current cell if requested
   if (aAfter)
@@ -561,7 +560,7 @@ nsHTMLEditor::InsertTableRow(PRInt32 aNumber, bool aAfter)
 
   nsAutoEditBatch beginBatching(this);
   // Prevent auto insertion of BR in new cell until we're done
-  nsAutoRules beginRulesSniffing(this, kOpInsertNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
 
   if (aAfter)
   {
@@ -761,7 +760,7 @@ nsHTMLEditor::DeleteTableCell(PRInt32 aNumber)
 
   nsAutoEditBatch beginBatching(this);
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
   nsCOMPtr<nsIDOMElement> firstCell;
   nsCOMPtr<nsIDOMRange> range;
@@ -954,7 +953,7 @@ nsHTMLEditor::DeleteTableCellContents()
 
   nsAutoEditBatch beginBatching(this);
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
   //Don't let Rules System change the selection
   nsAutoTxnsConserveSelection dontChangeSelection(this);
 
@@ -995,7 +994,7 @@ nsHTMLEditor::DeleteCellContents(nsIDOMElement *aCell)
   NS_ENSURE_TRUE(aCell, NS_ERROR_NULL_POINTER);
 
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
   nsCOMPtr<nsIDOMNode> child;
   bool hasChild;
@@ -1039,7 +1038,7 @@ nsHTMLEditor::DeleteTableColumn(PRInt32 aNumber)
 
   nsAutoEditBatch beginBatching(this);
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
   // Test if deletion is controlled by selected cells
   nsCOMPtr<nsIDOMElement> firstCell;
@@ -1215,7 +1214,7 @@ nsHTMLEditor::DeleteTableRow(PRInt32 aNumber)
 
   nsAutoEditBatch beginBatching(this);
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
   nsCOMPtr<nsIDOMElement> firstCell;
   nsCOMPtr<nsIDOMRange> range;
@@ -1302,11 +1301,11 @@ nsHTMLEditor::DeleteRow(nsIDOMElement *aTable, PRInt32 aRowIndex)
   nsresult res = NS_OK;
    
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
   // The list of cells we will change rowspan in
   //  and the new rowspan values for each
-  nsTArray<nsIDOMElement*> spanCellList;
+  nsTArray<nsCOMPtr<nsIDOMElement> > spanCellList;
   nsTArray<PRInt32> newSpanList;
 
   // Scan through cells in row to do rowspan adjustments
@@ -1727,7 +1726,7 @@ nsHTMLEditor::SplitTableCell()
   
   nsAutoEditBatch beginBatching(this);
   // Prevent auto insertion of BR in new cell until we're done
-  nsAutoRules beginRulesSniffing(this, kOpInsertNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
 
   // We reset selection  
   nsSetSelectionAfterTableEdit setCaret(this, table, startRowIndex, startColIndex, ePreviousColumn, false);
@@ -1945,7 +1944,7 @@ nsHTMLEditor::SwitchTableCellHeaderType(nsIDOMElement *aSourceCell, nsIDOMElemen
 
   nsAutoEditBatch beginBatching(this);
   // Prevent auto insertion of BR in new cell created by ReplaceContainer
-  nsAutoRules beginRulesSniffing(this, kOpInsertNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
 
   nsCOMPtr<nsIDOMNode> newNode;
 
@@ -2144,7 +2143,7 @@ nsHTMLEditor::JoinTableCells(bool aMergeNonContiguousContents)
     }
   
     // The list of cells we will delete after joining
-    nsTArray<nsIDOMElement*> deleteList;
+    nsTArray<nsCOMPtr<nsIDOMElement> > deleteList;
 
     // 2nd pass: Do the joining and merging
     for (rowIndex = 0; rowIndex < rowCount; rowIndex++)
@@ -2204,7 +2203,7 @@ nsHTMLEditor::JoinTableCells(bool aMergeNonContiguousContents)
 
     // All cell contents are merged. Delete the empty cells we accumulated
     // Prevent rules testing until we're done
-    nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+    nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
     for (PRUint32 i = 0, n = deleteList.Length(); i < n; i++)
     {
@@ -2330,7 +2329,7 @@ nsHTMLEditor::MergeCells(nsCOMPtr<nsIDOMElement> aTargetCell,
   NS_ENSURE_TRUE(targetCell && cellToMerge, NS_ERROR_NULL_POINTER);
 
   // Prevent rules testing until we're done
-  nsAutoRules beginRulesSniffing(this, kOpDeleteNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
   // Don't need to merge if cell is empty
   if (!IsEmptyCell(cellToMerge)) {
@@ -2508,7 +2507,7 @@ nsHTMLEditor::NormalizeTable(nsIDOMElement *aTable)
 
   nsAutoEditBatch beginBatching(this);
   // Prevent auto insertion of BR in new cell until we're done
-  nsAutoRules beginRulesSniffing(this, kOpInsertNode, nsIEditor::eNext);
+  nsAutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
 
   nsCOMPtr<nsIDOMElement> cell;
   PRInt32 startRowIndex, startColIndex, rowSpan, colSpan, actualRowSpan, actualColSpan;

@@ -32,6 +32,10 @@ class nsIScrollFrameInternal;
 class nsPresState;
 struct ScrollReflowState;
 
+namespace mozilla {
+class ScrollbarActivity;
+}
+
 // When set, the next scroll operation on the scrollframe will invalidate its
 // entire contents. Useful for text-overflow.
 // This bit is cleared after each time the scrollframe is scrolled. Whoever
@@ -112,14 +116,13 @@ public:
     nsGfxScrollFrameInner *mInner;
   };
 
-  static void FinishReflowForScrollbar(nsIContent* aContent, nscoord aMinXY,
-                                       nscoord aMaxXY, nscoord aCurPosXY,
-                                       nscoord aPageIncrement,
-                                       nscoord aIncrement);
+  void FinishReflowForScrollbar(nsIContent* aContent, nscoord aMinXY,
+                                nscoord aMaxXY, nscoord aCurPosXY,
+                                nscoord aPageIncrement,
+                                nscoord aIncrement);
   static void SetScrollbarEnabled(nsIContent* aContent, nscoord aMaxPos);
-  static void SetCoordAttribute(nsIContent* aContent, nsIAtom* aAtom,
-                                nscoord aSize);
-  nscoord GetCoordAttribute(nsIBox* aFrame, nsIAtom* aAtom, nscoord aDefaultValue,
+  void SetCoordAttribute(nsIContent* aContent, nsIAtom* aAtom, nscoord aSize);
+  nscoord GetCoordAttribute(nsIFrame* aFrame, nsIAtom* aAtom, nscoord aDefaultValue,
                             nscoord* aRangeStart, nscoord* aRangeLength);
 
   // Update scrollbar curpos attributes to reflect current scroll position
@@ -163,6 +166,7 @@ public:
     ScrollToWithOrigin(aScrollPosition, aMode, nsGkAtoms::other, aRange);
   }
   void ScrollToCSSPixels(nsIntPoint aScrollPosition);
+  nsIntPoint GetScrollPositionCSSPixels();
   void ScrollToImpl(nsPoint aScrollPosition, const nsRect& aRange);
   void ScrollVisual(nsPoint aOldScrolledFramePosition);
   void ScrollBy(nsIntPoint aDelta, nsIScrollableFrame::ScrollUnit aUnit,
@@ -175,7 +179,7 @@ public:
   void RestoreState(nsPresState* aState);
 
   nsIFrame* GetScrolledFrame() const { return mScrolledFrame; }
-  nsIBox* GetScrollbarBox(bool aVertical) const {
+  nsIFrame* GetScrollbarBox(bool aVertical) const {
     return aVertical ? mVScrollbarBox : mHScrollbarBox;
   }
 
@@ -186,7 +190,7 @@ public:
     mListeners.RemoveElement(aListener);
   }
 
-  static void SetScrollbarVisibility(nsIBox* aScrollbar, bool aVisible);
+  static void SetScrollbarVisibility(nsIFrame* aScrollbar, bool aVisible);
 
   /**
    * GetScrolledRect is designed to encapsulate deciding which
@@ -262,13 +266,14 @@ public:
   nsRevocableEventPtr<ScrollEvent> mScrollEvent;
   nsRevocableEventPtr<AsyncScrollPortEvent> mAsyncScrollPortEvent;
   nsRevocableEventPtr<ScrolledAreaEvent> mScrolledAreaEvent;
-  nsIBox* mHScrollbarBox;
-  nsIBox* mVScrollbarBox;
+  nsIFrame* mHScrollbarBox;
+  nsIFrame* mVScrollbarBox;
   nsIFrame* mScrolledFrame;
-  nsIBox* mScrollCornerBox;
-  nsIBox* mResizerBox;
+  nsIFrame* mScrollCornerBox;
+  nsIFrame* mResizerBox;
   nsContainerFrame* mOuter;
   nsRefPtr<AsyncScroll> mAsyncScroll;
+  nsAutoPtr<mozilla::ScrollbarActivity> mScrollbarActivity;
   nsTArray<nsIScrollPositionListener*> mListeners;
   nsRect mScrollPort;
   // Where we're currently scrolling to, if we're scrolling asynchronously.
@@ -476,6 +481,9 @@ public:
   virtual void ScrollToCSSPixels(nsIntPoint aScrollPosition) {
     mInner.ScrollToCSSPixels(aScrollPosition);
   }
+  virtual nsIntPoint GetScrollPositionCSSPixels() {
+    return mInner.GetScrollPositionCSSPixels();
+  }
   virtual void ScrollBy(nsIntPoint aDelta, ScrollUnit aUnit, ScrollMode aMode,
                         nsIntPoint* aOverflow, nsIAtom *aOrigin = nullptr) {
     mInner.ScrollBy(aDelta, aUnit, aMode, aOverflow, aOrigin);
@@ -489,7 +497,7 @@ public:
   virtual void RemoveScrollPositionListener(nsIScrollPositionListener* aListener) {
     mInner.RemoveScrollPositionListener(aListener);
   }
-  virtual nsIBox* GetScrollbarBox(bool aVertical) {
+  virtual nsIFrame* GetScrollbarBox(bool aVertical) {
     return mInner.GetScrollbarBox(aVertical);
   }
   virtual void CurPosAttributeChanged(nsIContent* aChild) {
@@ -537,7 +545,7 @@ public:
 
 protected:
   nsHTMLScrollFrame(nsIPresShell* aShell, nsStyleContext* aContext, bool aIsRoot);
-  virtual PRIntn GetSkipSides() const;
+  virtual int GetSkipSides() const;
   
   void SetSuppressScrollbarUpdate(bool aSuppress) {
     mInner.mSupppressScrollbarUpdate = aSuppress;
@@ -721,6 +729,9 @@ public:
   virtual void ScrollToCSSPixels(nsIntPoint aScrollPosition) {
     mInner.ScrollToCSSPixels(aScrollPosition);
   }
+  virtual nsIntPoint GetScrollPositionCSSPixels() {
+    return mInner.GetScrollPositionCSSPixels();
+  }
   virtual void ScrollBy(nsIntPoint aDelta, ScrollUnit aUnit, ScrollMode aMode,
                         nsIntPoint* aOverflow, nsIAtom *aOrigin = nullptr) {
     mInner.ScrollBy(aDelta, aUnit, aMode, aOverflow, aOrigin);
@@ -734,7 +745,7 @@ public:
   virtual void RemoveScrollPositionListener(nsIScrollPositionListener* aListener) {
     mInner.RemoveScrollPositionListener(aListener);
   }
-  virtual nsIBox* GetScrollbarBox(bool aVertical) {
+  virtual nsIFrame* GetScrollbarBox(bool aVertical) {
     return mInner.GetScrollbarBox(aVertical);
   }
   virtual void CurPosAttributeChanged(nsIContent* aChild) {
@@ -784,7 +795,7 @@ public:
 
 protected:
   nsXULScrollFrame(nsIPresShell* aShell, nsStyleContext* aContext, bool aIsRoot);
-  virtual PRIntn GetSkipSides() const;
+  virtual int GetSkipSides() const;
 
   void ClampAndSetBounds(nsBoxLayoutState& aState, 
                          nsRect& aRect,

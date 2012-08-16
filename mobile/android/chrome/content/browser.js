@@ -27,11 +27,15 @@ XPCOMUtils.defineLazyGetter(this, "DebuggerServer", function() {
   return DebuggerServer;
 });
 
+XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
+  Cu.import("resource://gre/modules/NetUtil.jsm");
+  return NetUtil;
+});
+
 // Lazily-loaded browser scripts:
 [
   ["HelperApps", "chrome://browser/content/HelperApps.js"],
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
-  ["Readability", "chrome://browser/content/Readability.js"],
   ["WebAppRT", "chrome://browser/content/WebAppRT.js"],
 ].forEach(function (aScript) {
   let [name, script] = aScript;
@@ -1236,8 +1240,8 @@ var NativeWindow = {
         name: aName,
         context: aSelector,
         callback: aCallback,
-        matches: function(aElt) {
-          return this.context.matches(aElt);
+        matches: function(aElt, aX, aY) {
+          return this.context.matches(aElt, aX, aY);
         },
         getValue: function(aElt) {
           return {
@@ -1366,7 +1370,7 @@ var NativeWindow = {
         for each (let item in this.items) {
           // since we'll have to spin through this for each element, check that
           // it is not already in the list
-          if ((!this.menuitems || !this.menuitems[item.id]) && item.matches(element)) {
+          if ((!this.menuitems || !this.menuitems[item.id]) && item.matches(element, aX, aY)) {
             if (!this.menuitems)
               this.menuitems = {};
             this.menuitems[item.id] = item;
@@ -1430,8 +1434,8 @@ var NativeWindow = {
 
       if (selectedItem && selectedItem.callback) {
         while (popupNode) {
-          if (selectedItem.matches(popupNode)) {
-            selectedItem.callback.call(selectedItem, popupNode);
+          if (selectedItem.matches(popupNode, aEvent.clientX, aEvent.clientY)) {
+            selectedItem.callback.call(selectedItem, popupNode, aEvent.clientX, aEvent.clientY);
             break;
           }
           popupNode = popupNode.parentNode;
@@ -1520,6 +1524,17 @@ var SelectionHandler = {
 
   set _view(aView) {
     this._viewRef = Cu.getWeakReference(aView);
+  },
+
+  // The target can be a window or an input element
+  get _target() {
+    if (this._targetRef)
+      return this._targetRef.get();
+    return null;
+  },
+
+  set _target(aTarget) {
+    this._targetRef = Cu.getWeakReference(aTarget);
   },
 
   get _cwu() {
@@ -1632,36 +1647,31 @@ var SelectionHandler = {
 
   // aX/aY are in top-level window browser coordinates
   startSelection: function sh_startSelection(aElement, aX, aY) {
-    if (this._active) {
-      // If the user long tapped on the selection, show a context menu
-      if (this._pointInSelection(aX, aY)) {
-        this.showContextMenu(aX, aY);
-        return;
-      }
-
-      // Clear out any existing selection
+    // Clear out any existing selection
+    if (this._active)
       this.endSelection();
-    }
 
     // Get the element's view
     this._view = aElement.ownerDocument.defaultView;
+
+    if (aElement instanceof Ci.nsIDOMNSEditableElement)
+      this._target = aElement;
+    else
+      this._target = this._view;
+
     this._view.addEventListener("pagehide", this, false);
     this._isRTL = (this._view.getComputedStyle(aElement, "").direction == "rtl");
 
     // Remove any previous selected or created ranges. Tapping anywhere on a
     // page will create an empty range.
-    let selection = this._view.getSelection();
+    let selection = this.getSelection();
     selection.removeAllRanges();
 
     // Position the caret using a fake mouse click sent to the top-level window
     this._sendMouseEvents(aX, aY, false);
 
     try {
-      let selectionController = this._view.QueryInterface(Ci.nsIInterfaceRequestor).
-                                           getInterface(Ci.nsIWebNavigation).
-                                           QueryInterface(Ci.nsIInterfaceRequestor).
-                                           getInterface(Ci.nsISelectionDisplay).
-                                           QueryInterface(Ci.nsISelectionController);
+      let selectionController = this.getSelectionController();
 
       // Select the word nearest the caret
       selectionController.wordMove(false, false);
@@ -1670,13 +1680,14 @@ var SelectionHandler = {
       selectionController.wordMove(!this._isRTL, true);
     } catch(e) {
       // If we couldn't select the word at the given point, bail
-      Cu.reportError("Error selecting word: " + e);
+      this._cleanUp();
       return;
     }
 
     // If there isn't an appropriate selection, bail
     if (!selection.rangeCount || !selection.getRangeAt(0) || !selection.toString().trim().length) {
       selection.collapseToStart();
+      this._cleanUp();
       return;
     }
 
@@ -1689,53 +1700,42 @@ var SelectionHandler = {
 
     this.showHandles();
     this._active = true;
+
+    if (aElement instanceof Ci.nsIDOMNSEditableElement)
+      aElement.focus();
   },
 
-  showContextMenu: function sh_showContextMenu(aX, aY) {
-    let [SELECT_ALL, COPY, SHARE] = [0, 1, 2];
-    let listitems = [
-      { label: Strings.browser.GetStringFromName("contextmenu.selectAll"), id: SELECT_ALL },
-      { label: Strings.browser.GetStringFromName("contextmenu.copy"), id: COPY },
-      { label: Strings.browser.GetStringFromName("contextmenu.share"), id: SHARE }
-    ];
+  getSelection: function sh_getSelection() {
+    if (this._target instanceof Ci.nsIDOMNSEditableElement)
+      return this._target.QueryInterface(Ci.nsIDOMNSEditableElement).editor.selection;
+    else
+      return this._target.getSelection();
+  },
 
-    let msg = {
-      gecko: {
-        type: "Prompt:Show",
-        title: "",
-        listitems: listitems
-      }
-    };
-    let id = JSON.parse(sendMessageToJava(msg)).button;
+  getSelectionController: function sh_getSelectionController() {
+    if (this._target instanceof Ci.nsIDOMNSEditableElement)
+      return this._target.QueryInterface(Ci.nsIDOMNSEditableElement).editor.selectionController;
+    else
+      return this._target.QueryInterface(Ci.nsIInterfaceRequestor).
+                          getInterface(Ci.nsIWebNavigation).
+                          QueryInterface(Ci.nsIInterfaceRequestor).
+                          getInterface(Ci.nsISelectionDisplay).
+                          QueryInterface(Ci.nsISelectionController);
+  },
 
-    switch (id) {
-      case SELECT_ALL: {
-        let selectionController = this._view.QueryInterface(Ci.nsIInterfaceRequestor).
-                                             getInterface(Ci.nsIWebNavigation).
-                                             QueryInterface(Ci.nsIInterfaceRequestor).
-                                             getInterface(Ci.nsISelectionDisplay).
-                                             QueryInterface(Ci.nsISelectionController);
-        selectionController.selectAll();
-        this.updateCacheForSelection();
-        this.positionHandles();
-        break;
-      }
-      case COPY: {
-        // Passing coordinates to endSelection takes care of copying for us
-        this.endSelection(aX, aY);
-        break;
-      }
-      case SHARE: {
-        let selectedText = this.endSelection();
-        sendMessageToJava({
-          gecko: {
-            type: "Share:Text",
-            text: selectedText
-          }
-        });
-        break;
-      }
-    }
+  // Used by the contextmenu "matches" functions in ClipboardHelper
+  shouldShowContextMenu: function sh_shouldShowContextMenu(aX, aY) {
+    return this._active && this._pointInSelection(aX, aY);
+  },
+
+  selectAll: function sh_selectAll(aElement, aX, aY) {
+    if (!this._active)
+      this.startSelection(aElement, aX, aY);
+
+    let selectionController = this.getSelectionController();
+    selectionController.selectAll();
+    this.updateCacheForSelection();
+    this.positionHandles();
   },
 
   // Moves the ends of the selection in the page. aX/aY are in top-level window
@@ -1778,7 +1778,7 @@ var SelectionHandler = {
   // aX/aY are in top-level window browser coordinates
   endSelection: function sh_endSelection(aX, aY) {
     if (!this._active)
-      return;
+      return "";
 
     this._active = false;
     this.hideHandles();
@@ -1786,7 +1786,7 @@ var SelectionHandler = {
     let selectedText = "";
     let pointInSelection = false;
     if (this._view) {
-      let selection = this._view.getSelection();
+      let selection = this.getSelection();
       if (selection) {
         // Get the text before we clear the selection!
         selectedText = selection.toString().trim();
@@ -1811,12 +1811,17 @@ var SelectionHandler = {
       }
     }
 
-    this._view.removeEventListener("pagehide", this, false);
-    this._view = null;
-    this._isRTL = false;
-    this.cache = null;
+    this._cleanUp();
 
     return selectedText;
+  },
+
+  _cleanUp: function sh_cleanUp() {
+    this._view.removeEventListener("pagehide", this, false);
+    this._view = null;
+    this._target = null;
+    this._isRTL = false;
+    this.cache = null;
   },
 
   _getViewOffset: function sh_getViewOffset() {
@@ -1837,7 +1842,7 @@ var SelectionHandler = {
 
   _pointInSelection: function sh_pointInSelection(aX, aY) {
     let offset = this._getViewOffset();
-    let rangeRect = this._view.getSelection().getRangeAt(0).getBoundingClientRect();
+    let rangeRect = this.getSelection().getRangeAt(0).getBoundingClientRect();
     let radius = ElementTouchHelper.getTouchRadius();
     return (aX - offset.x > rangeRect.left - radius.left &&
             aX - offset.x < rangeRect.right + radius.right &&
@@ -1848,7 +1853,8 @@ var SelectionHandler = {
   // Returns true if the selection has been reversed. Takes optional aIsStartHandle
   // param to decide whether the selection has been reversed.
   updateCacheForSelection: function sh_updateCacheForSelection(aIsStartHandle) {
-    let rects = this._view.getSelection().getRangeAt(0).getClientRects();
+    let selection = this.getSelection();
+    let rects = selection.getRangeAt(0).getClientRects();
     let start = { x: rects[0].left, y: rects[0].bottom };
     let end = { x: rects[rects.length - 1].right, y: rects[rects.length - 1].bottom };
 
@@ -1871,6 +1877,7 @@ var SelectionHandler = {
     let offset = this._getViewOffset();
     let scrollX = {}, scrollY = {};
     this._view.top.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).getScrollXY(false, scrollX, scrollY);
+
     sendMessageToJava({
       gecko: {
         type: "TextSelection:PositionHandles",
@@ -2823,10 +2830,12 @@ Tab.prototype = {
           }
         });
 
-        // Once document is fully loaded, we can do a readability check to
-        // possibly enable reader mode for this page
-        Reader.checkTabReadability(this.id, function(isReadable) {
-          if (!isReadable)
+        // Once document is fully loaded, parse it
+        Reader.parseDocumentFromTab(this.id, function (article) {
+          // Do nothing if there's no article or the page in this tab has
+          // changed
+          let tabURL = this.browser.currentURI.specIgnoringRef;
+          if (article == null || (article.url != tabURL))
             return;
 
           sendMessageToJava({
@@ -2971,33 +2980,37 @@ Tab.prototype = {
   onStatusChange: function(aBrowser, aWebProgress, aRequest, aStatus, aMessage) {
   },
 
-  _sendHistoryEvent: function(aMessage, aIndex, aUri) {
+  _sendHistoryEvent: function(aMessage, aParams) {
     let message = {
       gecko: {
         type: "SessionHistory:" + aMessage,
         tabID: this.id,
       }
     };
-    if (aIndex != -1) {
-      message.gecko.index = aIndex;
+
+    if (aParams) {
+      if ("url" in aParams)
+        message.gecko.url = aParams.url;
+      if ("index" in aParams)
+        message.gecko.index = aParams.index;
+      if ("numEntries" in aParams)
+        message.gecko.numEntries = aParams.numEntries;
     }
-    if (aUri != null) {
-      message.gecko.uri = aUri;
-    }
+
     sendMessageToJava(message);
   },
 
   OnHistoryNewEntry: function(aUri) {
-    this._sendHistoryEvent("New", -1, aUri.spec);
+    this._sendHistoryEvent("New", { url: aUri.spec });
   },
 
   OnHistoryGoBack: function(aUri) {
-    this._sendHistoryEvent("Back", -1, null);
+    this._sendHistoryEvent("Back");
     return true;
   },
 
   OnHistoryGoForward: function(aUri) {
-    this._sendHistoryEvent("Forward", -1, null);
+    this._sendHistoryEvent("Forward");
     return true;
   },
 
@@ -3008,12 +3021,12 @@ Tab.prototype = {
   },
 
   OnHistoryGotoIndex: function(aIndex, aUri) {
-    this._sendHistoryEvent("Goto", aIndex, null);
+    this._sendHistoryEvent("Goto", { index: aIndex });
     return true;
   },
 
   OnHistoryPurge: function(aNumEntries) {
-    this._sendHistoryEvent("Purge", aNumEntries, null);
+    this._sendHistoryEvent("Purge", { numEntries: aNumEntries });
     return true;
   },
 
@@ -3093,6 +3106,19 @@ Tab.prototype = {
     // on the layout at that width.
     let oldBrowserWidth = this.browserWidth;
     this.setBrowserSize(viewportW, viewportH);
+
+    // if this page has not been painted yet, then this must be getting run
+    // because a meta-viewport element was added (via the DOMMetaAdded handler).
+    // in this case, we should not do anything that forces a reflow (see bug 759678)
+    // such as requesting the page size or sending a viewport update. this code
+    // will get run again in the before-first-paint handler and that point we
+    // will run though all of it. the reason we even bother executing up to this
+    // point on the DOMMetaAdded handler is so that scripts that use window.innerWidth
+    // before they are painted have a correct value (bug 771575).
+    if (!this.contentDocumentIsDisplayed) {
+      return;
+    }
+
     let minScale = 1.0;
     if (this.browser.contentDocument) {
       // this may get run during a Viewport:Change message while the document
@@ -3168,6 +3194,9 @@ Tab.prototype = {
         // Is it on the top level?
         let contentDocument = aSubject;
         if (contentDocument == this.browser.contentDocument) {
+          BrowserApp.displayedDocumentChanged();
+          this.contentDocumentIsDisplayed = true;
+
           // reset CSS viewport and zoom to default on new page, and then calculate
           // them properly using the actual metadata from the page. note that the
           // updateMetadata call takes into account the existing CSS viewport size
@@ -3194,9 +3223,6 @@ Tab.prototype = {
             this.setResolution(fitZoom, false);
             this.sendViewportUpdate();
           }
-
-          BrowserApp.displayedDocumentChanged();
-          this.contentDocumentIsDisplayed = true;
         }
         break;
       case "nsPref:changed":
@@ -3341,7 +3367,7 @@ var BrowserEventHandler = {
 
           if (isClickable) {
             [data.x, data.y] = this._moveClickPoint(element, data.x, data.y);
-            element = ElementTouchHelper.anyElementFromPoint(element.ownerDocument.defaultView, data.x, data.y);
+            element = ElementTouchHelper.anyElementFromPoint(element.ownerDocument.defaultView.top, data.x, data.y);
             isClickable = ElementTouchHelper.isElementClickable(element);
           }
 
@@ -4010,12 +4036,21 @@ var FormAssistant = {
         if (!this._currentInputElement)
           break;
 
-        this._currentInputElement.QueryInterface(Ci.nsIDOMNSEditableElement).setUserInput(aData);
+        let editableElement = this._currentInputElement.QueryInterface(Ci.nsIDOMNSEditableElement);
+
+        // If we have an active composition string, commit it before sending
+        // the autocomplete event with the text that will replace it.
+        try {
+          let imeEditor = editableElement.editor.QueryInterface(Ci.nsIEditorIMESupport);
+          if (imeEditor.composing)
+            imeEditor.forceCompositionEnd();
+        } catch (e) {}
+
+        editableElement.setUserInput(aData);
 
         let event = this._currentInputElement.ownerDocument.createEvent("Events");
         event.initEvent("DOMAutoComplete", true, true);
         this._currentInputElement.dispatchEvent(event);
-
         break;
 
       case "FormAssist:Blocklisted":
@@ -4428,7 +4463,7 @@ var ViewportHandler = {
         let document = target.ownerDocument;
         let browser = BrowserApp.getBrowserForDocument(document);
         let tab = BrowserApp.getTabForBrowser(browser);
-        if (tab && tab.contentDocumentIsDisplayed)
+        if (tab)
           this.updateMetadata(tab);
         break;
     }
@@ -4450,10 +4485,6 @@ var ViewportHandler = {
           tabs[i].updateViewportSize(oldScreenWidth);
         break;
     }
-  },
-
-  resetMetadata: function resetMetadata(tab) {
-    tab.updateViewportMetadata(null);
   },
 
   updateMetadata: function updateMetadata(tab) {
@@ -4953,7 +4984,9 @@ var ClipboardHelper = {
   init: function() {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copy"), ClipboardHelper.getCopyContext(false), ClipboardHelper.copy.bind(ClipboardHelper));
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyAll"), ClipboardHelper.getCopyContext(true), ClipboardHelper.copy.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), ClipboardHelper.selectAllContext, ClipboardHelper.select.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectWord"), ClipboardHelper.selectWordContext, ClipboardHelper.selectWord.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), ClipboardHelper.selectAllContext, ClipboardHelper.selectAll.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.share"), ClipboardHelper.shareContext, ClipboardHelper.share.bind(ClipboardHelper));
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.paste"), ClipboardHelper.pasteContext, ClipboardHelper.paste.bind(ClipboardHelper));
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.changeInputMethod"), NativeWindow.contextmenus.textContext, ClipboardHelper.inputMethod.bind(ClipboardHelper));
   },
@@ -4968,7 +5001,13 @@ var ClipboardHelper = {
     return this.clipboard = Cc["@mozilla.org/widget/clipboard;1"].getService(Ci.nsIClipboard);
   },
 
-  copy: function(aElement) {
+  copy: function(aElement, aX, aY) {
+    if (SelectionHandler.shouldShowContextMenu(aX, aY)) {
+      // Passing coordinates to endSelection takes care of copying for us
+      SelectionHandler.endSelection(aX, aY);
+      return;
+    }
+
     let selectionStart = aElement.selectionStart;
     let selectionEnd = aElement.selectionEnd;
     if (selectionStart != selectionEnd) {
@@ -4979,12 +5018,22 @@ var ClipboardHelper = {
     }
   },
 
-  select: function(aElement) {
-    if (!aElement || !(aElement instanceof Ci.nsIDOMNSEditableElement))
-      return;
-    let target = aElement.QueryInterface(Ci.nsIDOMNSEditableElement);
-    target.editor.selectAll();
-    target.focus();
+  selectWord: function(aElement, aX, aY) {
+    SelectionHandler.startSelection(aElement, aX, aY);
+  },
+
+  selectAll: function(aElement, aX, aY) {
+    SelectionHandler.selectAll(aElement, aX, aY);
+  },
+
+  share: function() {
+    let selectedText = SelectionHandler.endSelection();
+    sendMessageToJava({
+      gecko: {
+        type: "Share:Text",
+        text: selectedText
+      }
+    });
   },
 
   paste: function(aElement) {
@@ -5001,7 +5050,11 @@ var ClipboardHelper = {
 
   getCopyContext: function(isCopyAll) {
     return {
-      matches: function(aElement) {
+      matches: function(aElement, aX, aY) {
+        // Do not show "Copy All" for normal non-input text selection.
+        if (!isCopyAll && SelectionHandler.shouldShowContextMenu(aX, aY))
+          return true;
+
         if (NativeWindow.contextmenus.textContext.matches(aElement)) {
           // Don't include "copy" for password fields.
           // mozIsTextField(true) tests for only non-password fields.
@@ -5021,14 +5074,30 @@ var ClipboardHelper = {
     }
   },
 
-  selectAllContext: {
-    matches: function selectAllContextMatches(aElement) {
-      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
-          let selectionStart = aElement.selectionStart;
-          let selectionEnd = aElement.selectionEnd;
-          return (selectionStart > 0 || selectionEnd < aElement.textLength);
-      }
+  selectWordContext: {
+    matches: function selectWordContextMatches(aElement) {
+      if (NativeWindow.contextmenus.textContext.matches(aElement))
+        return aElement.textLength > 0;
+
       return false;
+    }
+  },
+
+  selectAllContext: {
+    matches: function selectAllContextMatches(aElement, aX, aY) {
+      if (SelectionHandler.shouldShowContextMenu(aX, aY))
+        return true;
+
+      if (NativeWindow.contextmenus.textContext.matches(aElement))
+        return (aElement.selectionStart > 0 || aElement.selectionEnd < aElement.textLength);
+
+      return false;
+    }
+  },
+
+  shareContext: {
+    matches: function shareContextMatches(aElement, aX, aY) {
+      return SelectionHandler.shouldShowContextMenu(aX, aY);
     }
   },
 
@@ -5860,6 +5929,7 @@ var WebappsUI = {
     Services.obs.addObserver(this, "webapps-launch", false);
     Services.obs.addObserver(this, "webapps-sync-install", false);
     Services.obs.addObserver(this, "webapps-sync-uninstall", false);
+    Services.obs.addObserver(this, "webapps-install-error", false);
   },
   
   uninit: function unint() {
@@ -5867,11 +5937,33 @@ var WebappsUI = {
     Services.obs.removeObserver(this, "webapps-launch");
     Services.obs.removeObserver(this, "webapps-sync-install");
     Services.obs.removeObserver(this, "webapps-sync-uninstall");
+    Services.obs.removeObserver(this, "webapps-install-error", false);
   },
-  
+
+  DEFAULT_PREFS_FILENAME: "default-prefs.js",
+
   observe: function observe(aSubject, aTopic, aData) {
-    let data = JSON.parse(aData);
+    let data = {};
+    try { data = JSON.parse(aData); }
+    catch(ex) { }
     switch (aTopic) {
+      case "webapps-install-error":
+        let msg = "";
+        switch (aData) {
+          case "INVALID_MANIFEST":
+          case "MANIFEST_PARSE_ERROR":
+            msg = Strings.browser.GetStringFromName("webapps.manifestInstallError");
+            break;
+          case "NETWORK_ERROR":
+          case "MANIFEST_URL_ERROR":
+            msg = Strings.browser.GetStringFromName("webapps.networkInstallError");
+            break;
+          default:
+            msg = Strings.browser.GetStringFromName("webapps.installError");
+        }
+        NativeWindow.toast.show(msg, "short");
+        console.log("Error installing app: " + aData);
+        break;
       case "webapps-ask-install":
         this.doInstall(data);
         break;
@@ -5884,33 +5976,12 @@ var WebappsUI = {
         }).bind(this));
         break;
       case "webapps-sync-install":
-        // Wait until we know the app install worked, then make a homescreen shortcut
+        // Create a system notification allowing the user to launch the app
         DOMApplicationRegistry.getManifestFor(data.origin, (function(aManifest) {
           if (!aManifest)
             return;
           let manifest = new DOMApplicationManifest(aManifest, data.origin);
 
-          // The manifest is stored as UTF-8, sendMessageToJava expects UTF-16. Convert before sending
-          let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].createInstance(Ci.nsIScriptableUnicodeConverter);
-          converter.charset = "UTF-8";
-          let name = manifest.name ? converter.ConvertToUnicode(manifest.name) :
-                                     converter.ConvertToUnicode(manifest.fullLaunchPath());
-
-          // Add a homescreen shortcut -- we can't use createShortcut, since we need to pass
-          // a unique ID for Android webapp allocation
-          this.makeBase64Icon(this.getBiggestIcon(manifest.icons, Services.io.newURI(data.origin, null, null)),
-                              function(icon) {
-                                sendMessageToJava({
-                                  gecko: {
-                                    type: "WebApps:Install",
-                                    name: name,
-                                    launchPath: manifest.fullLaunchPath(),
-                                    iconURL: icon,
-                                    uniqueURI: data.origin
-                                  }
-                                })});
-
-          // Create a system notification allowing the user to launch the app
           let observer = {
             observe: function (aSubject, aTopic) {
               if (aTopic == "alertclickcallback") {
@@ -5971,12 +6042,62 @@ var WebappsUI = {
   doInstall: function doInstall(aData) {
     let manifest = new DOMApplicationManifest(aData.app.manifest, aData.app.origin);
     let name = manifest.name ? manifest.name : manifest.fullLaunchPath();
-    if (Services.prompt.confirm(null, Strings.browser.GetStringFromName("webapps.installTitle"), name))
-      DOMApplicationRegistry.confirmInstall(aData);
-    else
-      DOMApplicationRegistry.denyInstall(aData);
-  },
+    if (Services.prompt.confirm(null, Strings.browser.GetStringFromName("webapps.installTitle"), name)) {
+      // Add a homescreen shortcut -- we can't use createShortcut, since we need to pass
+      // a unique ID for Android webapp allocation
+      this.makeBase64Icon(this.getBiggestIcon(manifest.icons, Services.io.newURI(aData.app.origin, null, null)),
+        (function(icon) {
+          let profilePath = sendMessageToJava({
+            gecko: {
+              type: "WebApps:Install",
+              name: manifest.name,
+              launchPath: manifest.fullLaunchPath(),
+              iconURL: icon,
+              uniqueURI: aData.app.origin
+            }
+          });
   
+          // if java returned a profile path to us, try to use it to pre-populate the app cache
+          let file = null;
+          if (profilePath) {
+            file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+            file.initWithPath(profilePath);
+
+            // build any app specific default prefs
+            let prefs = [];
+            if (manifest.orientation)
+              prefs.push({name:"app.orientation.default", value: manifest.orientation});
+
+            // write them into the app profile
+            let defaultPrefsFile = file.clone();
+            defaultPrefsFile.append(this.DEFAULT_PREFS_FILENAME);
+            this.writeDefaultPrefs(defaultPrefsFile, prefs);
+          }
+          DOMApplicationRegistry.confirmInstall(aData, false, file);
+        }).bind(this));
+    } else {
+      DOMApplicationRegistry.denyInstall(aData);
+    }
+  },
+
+  writeDefaultPrefs: function webapps_writeDefaultPrefs(aFile, aPrefs) {
+    if (aPrefs.length > 0) {
+      let data = JSON.stringify(aPrefs);
+
+      var ostream = Cc["@mozilla.org/network/file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
+      ostream.init(aFile, -1, -1, 0);
+
+      let istream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(Ci.nsIStringInputStream);
+      istream.setData(data, data.length);
+
+      NetUtil.asyncCopy(istream, ostream, function(aResult) {
+        if (!Components.isSuccessCode(aResult)) {
+          console.log("Error writing default prefs: " + aResult);
+        }
+      });
+    }
+  },
+
   openURL: function openURL(aURI, aOrigin) {
     sendMessageToJava({
       gecko: {
@@ -6319,21 +6440,13 @@ let Reader = {
           return;
         }
 
-        // We need to clone the document before parsing because readability
-        // changes the document object in several ways to find the article
-        // in it.
-        let doc = tab.browser.contentWindow.document.cloneNode(true);
-
-        let readability = new Readability(uri, doc);
-        readability.parse(function (article) {
+        let doc = tab.browser.contentWindow.document;
+        this._readerParse(uri, doc, function (article) {
           if (!article) {
             this.log("Failed to parse page");
             callback(null);
             return;
           }
-
-          // Append URL to the article data
-          article.url = url;
 
           callback(article);
         }.bind(this));
@@ -6341,33 +6454,6 @@ let Reader = {
     } catch (e) {
       this.log("Error parsing document from tab: " + e);
       callback(null);
-    }
-  },
-
-  checkTabReadability: function Reader_checkTabReadability(tabId, callback) {
-    try {
-      this.log("checkTabReadability: " + tabId);
-
-      let tab = BrowserApp.getTabForId(tabId);
-      let url = tab.browser.contentWindow.location.href;
-
-      // First, try to find a cached parsed article in the DB
-      this.getArticleFromCache(url, function(article) {
-        if (article) {
-          this.log("Page found in cache, page is definitely readable");
-          callback(true);
-          return;
-        }
-
-        let uri = Services.io.newURI(url, null, null);
-        let doc = tab.browser.contentWindow.document;
-
-        let readability = new Readability(uri, doc);
-        readability.check(callback);
-      }.bind(this));
-    } catch (e) {
-      this.log("Error checking tab readability: " + e);
-      callback(false);
     }
   },
 
@@ -6468,6 +6554,36 @@ let Reader = {
       dump("Reader: " + msg);
   },
 
+  _readerParse: function Reader_readerParse(uri, doc, callback) {
+    let worker = new ChromeWorker("readerWorker.js");
+    worker.onmessage = function (evt) {
+      let article = evt.data;
+
+      // Append URL to the article data. specIgnoringRef will ignore any hash
+      // in the URL.
+      if (article)
+        article.url = uri.specIgnoringRef;
+
+      callback(article);
+    };
+
+    try {
+      worker.postMessage({
+        uri: {
+          spec: uri.spec,
+          host: uri.host,
+          prePath: uri.prePath,
+          scheme: uri.scheme,
+          pathBase: Services.io.newURI(".", null, uri).spec
+        },
+        doc: new XMLSerializer().serializeToString(doc)
+      });
+    } catch (e) {
+      dump("Reader: could not build Readability arguments: " + e);
+      callback(null);
+    }
+  },
+
   _runCallbacksAndFinish: function Reader_runCallbacksAndFinish(request, result) {
     delete this._requests[request.url];
 
@@ -6530,8 +6646,7 @@ let Reader = {
         this.log("Parsing response with Readability");
 
         let uri = Services.io.newURI(url, null, null);
-        let readability = new Readability(uri, doc);
-        readability.parse(function (article) {
+        this._readerParse(uri, doc, function (article) {
           // Delete reference to the browser element as we've finished parsing.
           let browser = request.browser;
           if (browser) {
@@ -6546,9 +6661,6 @@ let Reader = {
           }
 
           this.log("Parsing has been successful");
-
-          // Append URL to the article data
-          article.url = url;
 
           this._runCallbacksAndFinish(request, article);
         }.bind(this));

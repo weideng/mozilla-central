@@ -48,8 +48,8 @@ class nsIArray;
 class nsPIWindowRoot;
 
 #define NS_PIDOMWINDOW_IID \
-{ 0x0c4d0b84, 0xb524, 0x4572, \
-  { 0x8e, 0xd1, 0x7f, 0x78, 0x14, 0x7c, 0x4d, 0xf1 } }
+{0x66660102, 0xd875, 0x47e2, \
+  {0xa1, 0xf7, 0x12, 0xbc, 0x83, 0xc9, 0x93, 0xa9}}
 
 class nsPIDOMWindow : public nsIDOMWindowInternal
 {
@@ -172,6 +172,20 @@ public:
     return mDoc;
   }
 
+  nsIDocument* GetDoc()
+  {
+    if (!mDoc) {
+      MaybeCreateDoc();
+    }
+    return mDoc;
+  }
+
+protected:
+  // Lazily instantiate an about:blank document if necessary, and if
+  // we have what it takes to do so.
+  void MaybeCreateDoc();
+
+public:
   // Internal getter/setter for the frame element, this version of the
   // getter crosses chrome boundaries whereas the public scriptable
   // one doesn't for security reasons.
@@ -596,17 +610,11 @@ public:
   virtual void RefreshCompartmentPrincipal() = 0;
 
   /**
-   * Returns if the window is part of an application.
-   * It will check for the window app state and its parents until a window has
-   * an app state different from |TriState_Unknown|.
+   * Like nsIDOMWindow::Open, except that we don't navigate to the given URL.
    */
-  virtual bool IsPartOfApp() = 0;
-
-  /**
-   * Returns true of this window is part of an we app, and this window has
-   * the same origin (principal) as the web app.
-   */
-  virtual bool IsInAppOrigin() = 0;
+  virtual nsresult
+  OpenNoNavigate(const nsAString& aUrl, const nsAString& aName,
+                 const nsAString& aOptions, nsIDOMWindow **_retval) = 0;
 
 protected:
   // The nsPIDOMWindow constructor. The aOuterWindow argument should

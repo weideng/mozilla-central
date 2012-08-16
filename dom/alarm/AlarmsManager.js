@@ -78,7 +78,7 @@ AlarmsManager.prototype = {
 
     return this._cpmm.sendSyncMessage(
       "AlarmsManager:Remove", 
-      { id: aId }
+      { id: aId, manifestURL: this._manifestURL }
     );
   },
 
@@ -88,7 +88,7 @@ AlarmsManager.prototype = {
     let request = this.createRequest();
     this._cpmm.sendAsyncMessage(
       "AlarmsManager:GetAll", 
-      { requestId: this.getRequestId(request) }
+      { requestId: this.getRequestId(request), manifestURL: this._manifestURL }
     );
     return request;
   },
@@ -154,11 +154,9 @@ AlarmsManager.prototype = {
                               "AlarmsManager:GetAll:Return:OK", "AlarmsManager:GetAll:Return:KO"]);
 
     // Get the manifest URL if this is an installed app
-    this._manifestURL = null;
-    let utils = aWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
-    let app = utils.getApp();
-    if (app)
-      this._manifestURL = app.manifestURL;
+    let appsService = Cc["@mozilla.org/AppsService;1"]
+                        .getService(Ci.nsIAppsService);
+    this._manifestURL = appsService.getManifestURLByLocalId(principal.appId);
   },
 
   // Called from DOMRequestIpcHelper.

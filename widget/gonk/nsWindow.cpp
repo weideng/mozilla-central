@@ -69,6 +69,12 @@ static pthread_t sFramebufferWatchThread;
 
 namespace {
 
+static int
+CancelBufferNoop(ANativeWindow* aWindow, android_native_buffer_t* aBuffer)
+{
+    return 0;
+}
+
 android::FramebufferNativeWindow*
 NativeWindow()
 {
@@ -76,6 +82,12 @@ NativeWindow()
         // We (apparently) don't have a way to tell if allocating the
         // fbs succeeded or failed.
         gNativeWindow = new android::FramebufferNativeWindow();
+
+        // Bug 776742: FrambufferNativeWindow doesn't set the cancelBuffer
+        // function pointer, causing EGL to segfault when the window surface
+        // is destroyed (i.e. on process exit). This workaround stops us
+        // from hard crashing in that situation.
+        gNativeWindow->cancelBuffer = CancelBufferNoop;
     }
     return gNativeWindow;
 }
@@ -513,6 +525,7 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
     if (mLayerManager)
         return mLayerManager;
 
+    LOG("Creating layer Manaer\n");
     // Set mUseAcceleratedRendering here to make it consistent with
     // nsBaseWidget::GetLayerManager
     mUseAcceleratedRendering = GetShouldAccelerate();
@@ -621,6 +634,15 @@ nsIntRect
 nsWindow::GetNaturalBounds()
 {
     return gScreenBounds;
+}
+
+bool
+nsWindow::NeedsPaint()
+{
+  if (!mLayerManager) {
+    return false;
+  }
+  return nsIWidget::NeedsPaint();
 }
 
 // nsScreenGonk.cpp
